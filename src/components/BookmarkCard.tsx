@@ -59,7 +59,7 @@ export function BookmarkCard({
             type="button"
             onClick={() => onToggleFavorite(bookmark.id)}
             aria-pressed={favorite}
-            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-label={favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
             className="rounded p-1.5 text-muted-foreground transition-colors hover:text-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 data-[favorite=true]:text-amber-500"
             data-favorite={favorite}
           >

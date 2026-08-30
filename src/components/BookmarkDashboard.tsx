@@ -8,20 +8,18 @@ import { BookmarkGrid } from "@/components/BookmarkGrid";
 import { BookmarkDialog } from "@/components/BookmarkDialog";
 import { DeleteBookmarkDialog } from "@/components/DeleteBookmarkDialog";
 import { generateBookmarkId, getDomain } from "@/lib/utils";
+import { ALL_CATEGORY_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 
 interface BookmarkDashboardProps {
   bookmarks: Bookmark[];
 }
-
-const ALL_FILTER = "all";
-const FAVORITES_FILTER = "favorites";
 
 type DialogState = { mode: "add" } | { mode: "edit"; bookmark: Bookmark } | null;
 
 export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashboardProps) {
   const [bookmarks, setBookmarks] = useState(initialBookmarks);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState(ALL_FILTER);
+  const [selectedCategory, setSelectedCategory] = useState<string>(ALL_CATEGORY_FILTER);
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteTarget, setDeleteTarget] = useState<Bookmark | null>(null);
 
@@ -30,9 +28,19 @@ export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashb
     [bookmarks],
   );
 
+  // If the selected category no longer has any bookmarks (e.g. its last
+  // bookmark was edited to a different category or deleted), fall back to
+  // "All" instead of leaving the user stuck on a filter tab that vanished.
+  const activeCategory =
+    selectedCategory === ALL_CATEGORY_FILTER ||
+    selectedCategory === FAVORITES_FILTER ||
+    uniqueCategories.includes(selectedCategory)
+      ? selectedCategory
+      : ALL_CATEGORY_FILTER;
+
   const categories = useMemo(
     () => [
-      { id: ALL_FILTER, label: "All", count: bookmarks.length },
+      { id: ALL_CATEGORY_FILTER, label: "All", count: bookmarks.length },
       {
         id: FAVORITES_FILTER,
         label: "Favorites",
@@ -52,7 +60,7 @@ export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashb
 
     return bookmarks.filter((bookmark) => {
       const matchesCategory =
-        activeCategory === ALL_FILTER
+        activeCategory === ALL_CATEGORY_FILTER
           ? true
           : activeCategory === FAVORITES_FILTER
             ? bookmark.favorite
@@ -65,6 +73,7 @@ export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashb
         bookmark.title,
         bookmark.description,
         bookmark.category,
+        bookmark.url,
         getDomain(bookmark.url),
         ...bookmark.tags,
       ]
@@ -143,15 +152,19 @@ export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashb
         <CategoryFilter
           categories={categories}
           activeCategory={activeCategory}
-          onChange={setActiveCategory}
+          onChange={setSelectedCategory}
         />
 
         <div className="mt-6">
           <BookmarkGrid
             bookmarks={filteredBookmarks}
+            totalBookmarks={bookmarks.length}
+            searchQuery={searchQuery}
+            activeCategory={activeCategory}
             onToggleFavorite={handleToggleFavorite}
             onEdit={handleOpenEditDialog}
             onDeleteRequest={handleDeleteRequest}
+            onClearSearch={() => setSearchQuery("")}
           />
         </div>
       </main>

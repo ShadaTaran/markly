@@ -1,29 +1,79 @@
 import type { Bookmark } from "@/types/bookmark";
 import { BookmarkCard } from "@/components/BookmarkCard";
-import { SearchIcon } from "@/components/icons";
+import { EmptyState } from "@/components/EmptyState";
+import { GlobeIcon, SearchIcon, StarIcon } from "@/components/icons";
+import { ALL_CATEGORY_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 
 interface BookmarkGridProps {
   bookmarks: Bookmark[];
+  totalBookmarks: number;
+  searchQuery: string;
+  activeCategory: string;
   onToggleFavorite: (id: string) => void;
   onEdit: (bookmark: Bookmark) => void;
   onDeleteRequest: (bookmark: Bookmark) => void;
+  onClearSearch: () => void;
 }
 
 export function BookmarkGrid({
   bookmarks,
+  totalBookmarks,
+  searchQuery,
+  activeCategory,
   onToggleFavorite,
   onEdit,
   onDeleteRequest,
+  onClearSearch,
 }: BookmarkGridProps) {
   if (bookmarks.length === 0) {
+    const trimmedQuery = searchQuery.trim();
+
+    if (totalBookmarks === 0) {
+      return (
+        <EmptyState
+          icon={<GlobeIcon width={22} height={22} />}
+          title="No bookmarks yet"
+          description="Add your first bookmark to get started."
+        />
+      );
+    }
+
+    if (trimmedQuery) {
+      return (
+        <EmptyState
+          icon={<SearchIcon width={22} height={22} />}
+          title="No bookmarks found"
+          description={`No bookmarks match "${trimmedQuery}".`}
+          action={{ label: "Clear search", onClick: onClearSearch }}
+        />
+      );
+    }
+
+    if (activeCategory === FAVORITES_FILTER) {
+      return (
+        <EmptyState
+          icon={<StarIcon width={22} height={22} />}
+          title="No favorites yet"
+          description="Star bookmarks to keep your most useful links here."
+        />
+      );
+    }
+
+    if (activeCategory !== ALL_CATEGORY_FILTER) {
+      return (
+        <EmptyState
+          icon={<SearchIcon width={22} height={22} />}
+          title={`No bookmarks in ${activeCategory} yet`}
+        />
+      );
+    }
+
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-20 text-center">
-        <SearchIcon className="text-muted-foreground" width={22} height={22} />
-        <p className="text-sm font-medium text-foreground">No bookmarks found</p>
-        <p className="max-w-xs text-sm text-muted-foreground">
-          Try a different search term or category.
-        </p>
-      </div>
+      <EmptyState
+        icon={<SearchIcon width={22} height={22} />}
+        title="No bookmarks found"
+        description="Try a different search term or category."
+      />
     );
   }
 
