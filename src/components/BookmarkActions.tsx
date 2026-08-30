@@ -73,7 +73,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => setMenuOpen(false)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-background"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-surface-hover"
           >
             <ExternalLinkIcon width={15} height={15} />
             Open link
@@ -82,7 +82,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
             type="button"
             role="menuitem"
             onClick={handleCopyLink}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-background"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
           >
             <CopyIcon width={15} height={15} />
             {copied ? "Copied!" : "Copy link"}
@@ -94,7 +94,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
               setMenuOpen(false);
               onEdit();
             }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-background"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
           >
             <PencilIcon width={15} height={15} />
             Edit
@@ -106,7 +106,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
               setMenuOpen(false);
               onDeleteRequest();
             }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-500 hover:bg-background"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-danger hover:bg-surface-hover"
           >
             <TrashIcon width={15} height={15} />
             Delete

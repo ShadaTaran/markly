@@ -1,34 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
+  --background: #fafafa;
   --foreground: #18181b;
   --surface: #ffffff;
+  --surface-hover: #f4f4f5;
   --border: #e4e4e7;
+  --muted: #f4f4f5;
   --muted-foreground: #71717a;
   --accent: #3b82f6;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+}
+
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #f4f4f5;
+  --surface: #131316;
+  --surface-hover: #1c1c20;
+  --border: #27272a;
+  --muted: #18181b;
+  --muted-foreground: #9f9fa9;
+  --accent: #60a5fa;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
   --color-border: var(--border);
+  --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #f4f4f5;
-    --surface: #131316;
-    --border: #27272a;
-    --muted-foreground: #9f9fa9;
-    --accent: #60a5fa;
-  }
 }
 
 body {
@@ -44,4 +54,32 @@ body {
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.dialog-overlay {
+  animation: dialog-overlay-in 150ms ease-out;
+}
+
+.dialog-panel {
+  animation: dialog-panel-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-overlay,
+  .dialog-panel {
+    animation: none;
+  }
 }

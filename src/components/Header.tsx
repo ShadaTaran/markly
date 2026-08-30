@@ -1,4 +1,5 @@
 import { SearchBar } from "@/components/SearchBar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { PlusIcon } from "@/components/icons";
 
 interface HeaderProps {
@@ -22,14 +23,17 @@ export function Header({ searchQuery, onSearchQueryChange, onAddBookmark }: Head
           <SearchBar value={searchQuery} onChange={onSearchQueryChange} />
         </div>
 
-        <button
-          type="button"
-          onClick={onAddBookmark}
-          className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
-          <PlusIcon width={16} height={16} />
-          Add Bookmark
-        </button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <ThemeToggle />
+          <button
+            type="button"
+            onClick={onAddBookmark}
+            className="flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          >
+            <PlusIcon width={16} height={16} />
+            Add Bookmark
+          </button>
+        </div>
       </div>
     </header>
   );

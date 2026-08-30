@@ -63,7 +63,7 @@ export function Dialog({ isOpen, onClose, title, children, widthClassName }: Dia
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="dialog-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div
@@ -74,7 +74,7 @@ export function Dialog({ isOpen, onClose, title, children, widthClassName }: Dia
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         className={cn(
-          "max-h-[90vh] w-full overflow-y-auto rounded-lg border border-border bg-surface p-6 outline-none",
+          "dialog-panel max-h-[90vh] w-full overflow-y-auto rounded-lg border border-border bg-surface p-6 outline-none",
           widthClassName ?? "max-w-md",
         )}
       >
