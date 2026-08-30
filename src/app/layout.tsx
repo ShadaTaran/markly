@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Markly – Bookmark Manager",
-  description: "Save, organize, and find your bookmarks in one place.",
+  title: "Markly — Bookmark Manager",
+  description:
+    "A modern bookmark manager for organizing, searching, and managing your favorite websites.",
 };
 
 const THEME_INIT_SCRIPT = `(function(){try{var stored=localStorage.getItem("markly.theme");var theme=stored==="light"||stored==="dark"?stored:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",theme)}catch(e){}})()`;

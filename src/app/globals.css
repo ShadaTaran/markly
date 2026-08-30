@@ -83,3 +83,15 @@ body {
     animation: none;
   }
 }
+
+/*
+ * Theme toggle circular reveal. The browser's default view-transition
+ * crossfade is disabled here; ThemeToggle drives the actual clip-path
+ * animation on ::view-transition-new(root) via the Web Animations API, so
+ * only the expanding circle is visible instead of a fade on top of it.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}

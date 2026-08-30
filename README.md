@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Markly
+
+Markly is a responsive bookmark manager built with Next.js and TypeScript. It provides a clean way to save, organize, search, filter, and favorite useful websites, with browser-based persistence and light/dark theme support.
+
+<!-- Add a screenshot here, e.g. ![Markly screenshot](./screenshot.png) -->
+
+## Features
+
+- Add, edit, and delete bookmarks, each with a title, URL, description, category, and tags
+- Full-text search across bookmark titles, URLs, descriptions, categories, and tags
+- Favorites, with a dedicated filter
+- Dynamic categories derived from your bookmarks (no fixed list), with normalization so casing/whitespace differences don't create near-duplicate categories
+- Click-to-filter tags, with a clearable active-tag indicator
+- Sorting by newest, oldest, title A–Z, or title Z–A
+- Combined filtering — search, category/favorites, and tag filters all apply together
+- Persistent storage via the browser's `localStorage`, including safe handling of missing or malformed stored data
+- Light and dark themes that respect the system preference on first visit, with the choice remembered afterward
+- Responsive layout for desktop, tablet, and mobile
+
+## Tech Stack
+
+- [Next.js](https://nextjs.org/) (App Router)
+- [React](https://react.dev/)
+- [TypeScript](https://www.typescriptlang.org/)
+- [Tailwind CSS](https://tailwindcss.com/)
+
+No backend, database, or authentication is used — Markly is intentionally a small, self-contained, client-side application.
 
 ## Getting Started
 
-First, run the development server:
+Prerequisites: Node.js 20.9 or later.
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+`npm run build` also type-checks the project as part of the Next.js build. A standalone type check is available separately:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run typecheck
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Data Persistence
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Markly stores bookmarks in the browser's `localStorage`, under the `markly.bookmarks` key. The chosen theme is stored separately under `markly.theme`. This means:
 
-## Deploy on Vercel
+- Data is stored per browser, per device — there is no account or cloud sync.
+- Clearing your browser's site data for Markly will remove your saved bookmarks.
+- Opening Markly in a different browser or device starts with a fresh set of starter bookmarks.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Environment Variables
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+None. Markly has no backend and does not require any environment configuration to run.
+
+## Project Structure
+
+```
+src/
+  app/            Next.js App Router entry point (layout, page, global styles, icon)
+  components/     UI components (bookmark cards, dialogs, filters, forms, theme toggle, etc.)
+  data/           Starter/mock bookmark data used on first visit
+  lib/            Pure helper functions (filtering, sorting, categories, storage, validation)
+  types/          Shared TypeScript types
+```
+
+## Future Improvements
+
+Possible directions beyond the current local-only version:
+
+- User accounts with cloud synchronization
+- Bookmark import/export
+- A companion browser extension

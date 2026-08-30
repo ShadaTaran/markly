@@ -24,7 +24,8 @@ export function normalizeUrl(raw: string): string {
 
 export function isValidUrl(value: string): boolean {
   try {
-    const { hostname } = new URL(value);
+    const { protocol, hostname } = new URL(value);
+    if (protocol !== "http:" && protocol !== "https:") return false;
     return hostname.length > 0 && (hostname.includes(".") || hostname === "localhost");
   } catch {
     return false;
