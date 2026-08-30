@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Bookmark, BookmarkInput } from "@/types/bookmark";
 import { Header } from "@/components/Header";
 import { CategoryFilter } from "@/components/CategoryFilter";
@@ -9,6 +9,7 @@ import { BookmarkDialog } from "@/components/BookmarkDialog";
 import { DeleteBookmarkDialog } from "@/components/DeleteBookmarkDialog";
 import { generateBookmarkId, getDomain } from "@/lib/utils";
 import { ALL_CATEGORY_FILTER, FAVORITES_FILTER } from "@/lib/constants";
+import { loadBookmarks, saveBookmarks } from "@/lib/bookmark-storage";
 
 interface BookmarkDashboardProps {
   bookmarks: Bookmark[];
@@ -18,19 +19,30 @@ type DialogState = { mode: "add" } | { mode: "edit"; bookmark: Bookmark } | null
 
 export function BookmarkDashboard({ bookmarks: initialBookmarks }: BookmarkDashboardProps) {
   const [bookmarks, setBookmarks] = useState(initialBookmarks);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>(ALL_CATEGORY_FILTER);
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteTarget, setDeleteTarget] = useState<Bookmark | null>(null);
+
+  useEffect(() => {
+    const stored = loadBookmarks();
+    if (stored) {
+      setBookmarks(stored);
+    }
+    setIsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    saveBookmarks(bookmarks);
+  }, [bookmarks, isHydrated]);
 
   const uniqueCategories = useMemo(
     () => Array.from(new Set(bookmarks.map((bookmark) => bookmark.category))).sort(),
     [bookmarks],
   );
 
-  // If the selected category no longer has any bookmarks (e.g. its last
-  // bookmark was edited to a different category or deleted), fall back to
-  // "All" instead of leaving the user stuck on a filter tab that vanished.
   const activeCategory =
     selectedCategory === ALL_CATEGORY_FILTER ||
     selectedCategory === FAVORITES_FILTER ||

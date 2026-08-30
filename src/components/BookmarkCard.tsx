@@ -29,7 +29,6 @@ export function BookmarkCard({
             {faviconFailed ? (
               <GlobeIcon width={16} height={16} className="text-muted-foreground" />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={getFaviconUrl(domain)}
                 alt=""
