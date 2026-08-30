@@ -4,9 +4,10 @@ import { PlusIcon } from "@/components/icons";
 interface HeaderProps {
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
+  onAddBookmark: () => void;
 }
 
-export function Header({ searchQuery, onSearchQueryChange }: HeaderProps) {
+export function Header({ searchQuery, onSearchQueryChange, onAddBookmark }: HeaderProps) {
   return (
     <header className="border-b border-border">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 sm:px-6 lg:px-8">
@@ -23,6 +24,7 @@ export function Header({ searchQuery, onSearchQueryChange }: HeaderProps) {
 
         <button
           type="button"
+          onClick={onAddBookmark}
           className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
           <PlusIcon width={16} height={16} />

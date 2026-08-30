@@ -5,9 +5,16 @@ import { SearchIcon } from "@/components/icons";
 interface BookmarkGridProps {
   bookmarks: Bookmark[];
   onToggleFavorite: (id: string) => void;
+  onEdit: (bookmark: Bookmark) => void;
+  onDeleteRequest: (bookmark: Bookmark) => void;
 }
 
-export function BookmarkGrid({ bookmarks, onToggleFavorite }: BookmarkGridProps) {
+export function BookmarkGrid({
+  bookmarks,
+  onToggleFavorite,
+  onEdit,
+  onDeleteRequest,
+}: BookmarkGridProps) {
   if (bookmarks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-20 text-center">
@@ -27,6 +34,8 @@ export function BookmarkGrid({ bookmarks, onToggleFavorite }: BookmarkGridProps)
           key={bookmark.id}
           bookmark={bookmark}
           onToggleFavorite={onToggleFavorite}
+          onEdit={onEdit}
+          onDeleteRequest={onDeleteRequest}
         />
       ))}
     </div>

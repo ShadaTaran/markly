@@ -7,3 +7,5 @@ export interface Bookmark {
   tags: string[];
   favorite: boolean;
 }
+
+export type BookmarkInput = Omit<Bookmark, "id" | "favorite">;

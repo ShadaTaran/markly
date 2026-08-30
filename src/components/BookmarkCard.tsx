@@ -1,59 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Bookmark } from "@/types/bookmark";
 import { getDomain, getFaviconUrl } from "@/lib/utils";
-import {
-  CopyIcon,
-  ExternalLinkIcon,
-  GlobeIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  StarIcon,
-  TrashIcon,
-} from "@/components/icons";
+import { BookmarkActions } from "@/components/BookmarkActions";
+import { GlobeIcon, StarIcon } from "@/components/icons";
 
 interface BookmarkCardProps {
   bookmark: Bookmark;
   onToggleFavorite: (id: string) => void;
+  onEdit: (bookmark: Bookmark) => void;
+  onDeleteRequest: (bookmark: Bookmark) => void;
 }
 
-export function BookmarkCard({ bookmark, onToggleFavorite }: BookmarkCardProps) {
+export function BookmarkCard({
+  bookmark,
+  onToggleFavorite,
+  onEdit,
+  onDeleteRequest,
+}: BookmarkCardProps) {
   const { title, url, description, category, tags, favorite } = bookmark;
   const domain = getDomain(url);
   const [faviconFailed, setFaviconFailed] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [menuOpen]);
-
-  async function handleCopyLink() {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard access unavailable; no-op.
-    }
-    setMenuOpen(false);
-  }
 
   return (
     <article className="group relative rounded-lg border border-border bg-surface p-4 transition-colors hover:border-foreground/25">
@@ -100,64 +66,11 @@ export function BookmarkCard({ bookmark, onToggleFavorite }: BookmarkCardProps) 
             <StarIcon filled={favorite} />
           </button>
 
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen((open) => !open)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-label="Bookmark actions"
-              className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            >
-              <MoreHorizontalIcon />
-            </button>
-
-            {menuOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-10 mt-1 w-40 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-sm"
-              >
-                <a
-                  role="menuitem"
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-background"
-                >
-                  <ExternalLinkIcon width={15} height={15} />
-                  Open link
-                </a>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={handleCopyLink}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-background"
-                >
-                  <CopyIcon width={15} height={15} />
-                  {copied ? "Copied!" : "Copy link"}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-background"
-                >
-                  <PencilIcon width={15} height={15} />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-500 hover:bg-background"
-                >
-                  <TrashIcon width={15} height={15} />
-                  Delete
-                </button>
-              </div>
-            )}
-          </div>
+          <BookmarkActions
+            url={url}
+            onEdit={() => onEdit(bookmark)}
+            onDeleteRequest={() => onDeleteRequest(bookmark)}
+          />
         </div>
       </div>
 
