@@ -1,10 +1,5 @@
 import { cn } from "@/lib/utils";
-
-export interface CategoryOption {
-  id: string;
-  label: string;
-  count: number;
-}
+import type { CategoryOption } from "@/lib/bookmarks";
 
 interface CategoryFilterProps {
   categories: CategoryOption[];

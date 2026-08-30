@@ -9,10 +9,13 @@ interface BookmarkGridProps {
   totalBookmarks: number;
   searchQuery: string;
   activeCategory: string;
+  activeTag: string | null;
   onToggleFavorite: (id: string) => void;
   onEdit: (bookmark: Bookmark) => void;
   onDeleteRequest: (bookmark: Bookmark) => void;
   onClearSearch: () => void;
+  onClearTag: () => void;
+  onTagClick: (tag: string) => void;
 }
 
 export function BookmarkGrid({
@@ -20,10 +23,13 @@ export function BookmarkGrid({
   totalBookmarks,
   searchQuery,
   activeCategory,
+  activeTag,
   onToggleFavorite,
   onEdit,
   onDeleteRequest,
   onClearSearch,
+  onClearTag,
+  onTagClick,
 }: BookmarkGridProps) {
   if (bookmarks.length === 0) {
     const trimmedQuery = searchQuery.trim();
@@ -45,6 +51,17 @@ export function BookmarkGrid({
           title="No bookmarks found"
           description={`No bookmarks match "${trimmedQuery}".`}
           action={{ label: "Clear search", onClick: onClearSearch }}
+        />
+      );
+    }
+
+    if (activeTag) {
+      return (
+        <EmptyState
+          icon={<SearchIcon width={22} height={22} />}
+          title="No bookmarks found"
+          description={`No bookmarks tagged "${activeTag}".`}
+          action={{ label: "Clear tag filter", onClick: onClearTag }}
         />
       );
     }
@@ -83,9 +100,11 @@ export function BookmarkGrid({
         <BookmarkCard
           key={bookmark.id}
           bookmark={bookmark}
+          activeTag={activeTag}
           onToggleFavorite={onToggleFavorite}
           onEdit={onEdit}
           onDeleteRequest={onDeleteRequest}
+          onTagClick={onTagClick}
         />
       ))}
     </div>

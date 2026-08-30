@@ -1,21 +1,25 @@
 import { useState } from "react";
 import type { Bookmark } from "@/types/bookmark";
-import { getDomain, getFaviconUrl } from "@/lib/utils";
+import { cn, getDomain, getFaviconUrl } from "@/lib/utils";
 import { BookmarkActions } from "@/components/BookmarkActions";
 import { GlobeIcon, StarIcon } from "@/components/icons";
 
 interface BookmarkCardProps {
   bookmark: Bookmark;
+  activeTag: string | null;
   onToggleFavorite: (id: string) => void;
   onEdit: (bookmark: Bookmark) => void;
   onDeleteRequest: (bookmark: Bookmark) => void;
+  onTagClick: (tag: string) => void;
 }
 
 export function BookmarkCard({
   bookmark,
+  activeTag,
   onToggleFavorite,
   onEdit,
   onDeleteRequest,
+  onTagClick,
 }: BookmarkCardProps) {
   const { title, url, description, category, tags, favorite } = bookmark;
   const domain = getDomain(url);
@@ -29,6 +33,7 @@ export function BookmarkCard({
             {faviconFailed ? (
               <GlobeIcon width={16} height={16} className="text-muted-foreground" />
             ) : (
+              // eslint-disable-next-line @next/next/no-img-element -- favicons are third-party, per-domain images; next/image's optimizer isn't a good fit here.
               <img
                 src={getFaviconUrl(domain)}
                 alt=""
@@ -78,14 +83,26 @@ export function BookmarkCard({
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        {tags.map((tag) => (
-          <span
-            key={tag}
-            className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground"
-          >
-            {tag}
-          </span>
-        ))}
+        {tags.map((tag) => {
+          const isActive = activeTag?.toLowerCase() === tag.toLowerCase();
+          return (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => onTagClick(tag)}
+              aria-pressed={isActive}
+              aria-label={`Filter by tag ${tag}`}
+              className={cn(
+                "rounded border px-1.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
+                isActive
+                  ? "border-foreground/60 text-foreground"
+                  : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground",
+              )}
+            >
+              {tag}
+            </button>
+          );
+        })}
       </div>
 
       <div className="mt-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">

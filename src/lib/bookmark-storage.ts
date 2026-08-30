@@ -19,6 +19,16 @@ function isValidBookmark(value: unknown): value is Bookmark {
   );
 }
 
+// Stage 4 data predates the `createdAt` field, so it isn't required for a
+// stored bookmark to be considered valid. Any bookmark missing it is
+// backfilled by migrateBookmark() below instead of being discarded.
+function migrateBookmark(bookmark: Bookmark): Bookmark {
+  if (typeof bookmark.createdAt === "string" && bookmark.createdAt.length > 0) {
+    return bookmark;
+  }
+  return { ...bookmark, createdAt: new Date().toISOString() };
+}
+
 export function loadBookmarks(): Bookmark[] | null {
   if (typeof window === "undefined") return null;
 
@@ -31,7 +41,7 @@ export function loadBookmarks(): Bookmark[] | null {
       return null;
     }
 
-    return parsed;
+    return parsed.map(migrateBookmark);
   } catch {
     return null;
   }
@@ -43,5 +53,6 @@ export function saveBookmarks(bookmarks: Bookmark[]): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bookmarks));
   } catch {
+    // Storage unavailable (e.g. private browsing, quota exceeded); ignore.
   }
 }

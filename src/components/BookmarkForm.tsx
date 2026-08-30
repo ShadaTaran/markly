@@ -156,7 +156,13 @@ export function BookmarkForm({
         />
       </Field>
 
-      <Field label="Category" htmlFor="bookmark-category" error={errors.category} required>
+      <Field
+        label="Category"
+        htmlFor="bookmark-category"
+        error={errors.category}
+        hint="Choose an existing category or type a new one."
+        required
+      >
         <input
           id="bookmark-category"
           type="text"

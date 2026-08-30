@@ -10,6 +10,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Development",
     tags: ["git", "code", "collaboration"],
     favorite: true,
+    createdAt: "2026-08-01T09:00:00.000Z",
   },
   {
     id: "stack-overflow",
@@ -20,6 +21,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Development",
     tags: ["community", "q&a", "debugging"],
     favorite: false,
+    createdAt: "2026-08-02T09:00:00.000Z",
   },
   {
     id: "vercel",
@@ -30,6 +32,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Development",
     tags: ["hosting", "deployment", "next.js"],
     favorite: false,
+    createdAt: "2026-08-03T09:00:00.000Z",
   },
   {
     id: "mdn",
@@ -40,6 +43,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Reference",
     tags: ["docs", "html", "css", "javascript"],
     favorite: false,
+    createdAt: "2026-08-04T09:00:00.000Z",
   },
   {
     id: "react-docs",
@@ -50,6 +54,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Reference",
     tags: ["react", "javascript", "ui"],
     favorite: true,
+    createdAt: "2026-08-05T09:00:00.000Z",
   },
   {
     id: "figma",
@@ -60,6 +65,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Design",
     tags: ["design", "ui", "prototyping"],
     favorite: true,
+    createdAt: "2026-08-06T09:00:00.000Z",
   },
   {
     id: "dribbble",
@@ -70,6 +76,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Design",
     tags: ["inspiration", "portfolio"],
     favorite: false,
+    createdAt: "2026-08-07T09:00:00.000Z",
   },
   {
     id: "notion",
@@ -80,6 +87,7 @@ export const mockBookmarks: Bookmark[] = [
     category: "Productivity",
     tags: ["notes", "planning", "docs"],
     favorite: false,
+    createdAt: "2026-08-08T09:00:00.000Z",
   },
   {
     id: "linear",
@@ -90,5 +98,6 @@ export const mockBookmarks: Bookmark[] = [
     category: "Productivity",
     tags: ["planning", "issues", "workflow"],
     favorite: false,
+    createdAt: "2026-08-09T09:00:00.000Z",
   },
 ];

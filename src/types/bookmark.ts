@@ -6,6 +6,7 @@ export interface Bookmark {
   category: string;
   tags: string[];
   favorite: boolean;
+  createdAt: string;
 }
 
-export type BookmarkInput = Omit<Bookmark, "id" | "favorite">;
+export type BookmarkInput = Omit<Bookmark, "id" | "favorite" | "createdAt">;
