@@ -2,17 +2,18 @@
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { XIcon } from "@/components/icons";
+import { ArrowLeftIcon, XIcon } from "@/components/icons";
 
 interface DialogProps {
   isOpen: boolean;
   onClose: () => void;
+  onBack?: () => void;
   title: string;
   children: ReactNode;
   widthClassName?: string;
 }
 
-export function Dialog({ isOpen, onClose, title, children, widthClassName }: DialogProps) {
+export function Dialog({ isOpen, onClose, onBack, title, children, widthClassName }: DialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -79,9 +80,21 @@ export function Dialog({ isOpen, onClose, title, children, widthClassName }: Dia
         )}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
-          <h2 id={titleId} className="text-base font-semibold text-foreground">
-            {title}
-          </h2>
+          <div className="flex min-w-0 items-center gap-2">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              >
+                <ArrowLeftIcon width={16} height={16} />
+              </button>
+            )}
+            <h2 id={titleId} className="truncate text-base font-semibold text-foreground">
+              {title}
+            </h2>
+          </div>
           <button
             type="button"
             onClick={onClose}

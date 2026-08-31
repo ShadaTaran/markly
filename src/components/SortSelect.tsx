@@ -1,4 +1,4 @@
-import type { SortOption } from "@/lib/bookmarks";
+import type { SortOption } from "@/lib/library-items";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "newest", label: "Newest" },
@@ -19,7 +19,7 @@ export function SortSelect({ value, onChange }: SortSelectProps) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as SortOption)}
-        aria-label="Sort bookmarks"
+        aria-label="Sort items"
         className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/25"
       >
         {SORT_OPTIONS.map((option) => (

@@ -13,8 +13,8 @@ export function SearchBar({ value, onChange }: SearchBarProps) {
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Search bookmarks, tags, or descriptions..."
-        aria-label="Search bookmarks"
+        placeholder="Search items, tags, or descriptions..."
+        aria-label="Search library"
         className="w-full rounded-md border border-border bg-surface py-2 pl-10 pr-9 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/25"
       />
       {value && (

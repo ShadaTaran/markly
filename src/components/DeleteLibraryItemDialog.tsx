@@ -1,26 +1,26 @@
-import type { Bookmark } from "@/types/bookmark";
+import type { LibraryItem } from "@/types/library-item";
 import { Dialog } from "@/components/Dialog";
 
-interface DeleteBookmarkDialogProps {
-  bookmark: Bookmark | null;
+interface DeleteLibraryItemDialogProps {
+  item: LibraryItem | null;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
-export function DeleteBookmarkDialog({
-  bookmark,
+export function DeleteLibraryItemDialog({
+  item,
   onCancel,
   onConfirm,
-}: DeleteBookmarkDialogProps) {
+}: DeleteLibraryItemDialogProps) {
   return (
     <Dialog
-      isOpen={bookmark !== null}
+      isOpen={item !== null}
       onClose={onCancel}
-      title={bookmark ? `Delete "${bookmark.title}"?` : "Delete bookmark?"}
+      title={item ? `Delete "${item.title}"?` : "Delete item?"}
       widthClassName="max-w-sm"
     >
       <p className="text-sm text-muted-foreground">
-        This bookmark will be removed. This action cannot be undone.
+        This item will be removed. This action cannot be undone.
       </p>
       <div className="mt-5 flex items-center justify-end gap-2">
         <button

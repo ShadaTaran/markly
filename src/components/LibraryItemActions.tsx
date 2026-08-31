@@ -7,13 +7,19 @@ import {
   TrashIcon,
 } from "@/components/icons";
 
-interface BookmarkActionsProps {
-  url: string;
+interface LibraryItemActionsProps {
+  url?: string;
+  linkLabel?: string;
   onEdit: () => void;
   onDeleteRequest: () => void;
 }
 
-export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkActionsProps) {
+export function LibraryItemActions({
+  url,
+  linkLabel = "Open link",
+  onEdit,
+  onDeleteRequest,
+}: LibraryItemActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -39,6 +45,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
   }, [menuOpen]);
 
   async function handleCopyLink() {
+    if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -56,7 +63,7 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
         onClick={() => setMenuOpen((open) => !open)}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        aria-label="Bookmark actions"
+        aria-label="Item actions"
         className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       >
         <MoreHorizontalIcon />
@@ -67,26 +74,30 @@ export function BookmarkActions({ url, onEdit, onDeleteRequest }: BookmarkAction
           role="menu"
           className="absolute right-0 top-full z-10 mt-1 w-40 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-sm"
         >
-          <a
-            role="menuitem"
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setMenuOpen(false)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-surface-hover"
-          >
-            <ExternalLinkIcon width={15} height={15} />
-            Open link
-          </a>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={handleCopyLink}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
-          >
-            <CopyIcon width={15} height={15} />
-            {copied ? "Copied!" : "Copy link"}
-          </button>
+          {url && (
+            <a
+              role="menuitem"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-surface-hover"
+            >
+              <ExternalLinkIcon width={15} height={15} />
+              {linkLabel}
+            </a>
+          )}
+          {url && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleCopyLink}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
+            >
+              <CopyIcon width={15} height={15} />
+              {copied ? "Copied!" : "Copy link"}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

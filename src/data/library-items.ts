@@ -1,8 +1,9 @@
-import type { Bookmark } from "@/types/bookmark";
+import type { WebsiteItem } from "@/types/library-item";
 
-export const mockBookmarks: Bookmark[] = [
+export const starterLibraryItems: WebsiteItem[] = [
   {
     id: "github",
+    type: "website",
     title: "GitHub",
     url: "https://github.com",
     description:
@@ -14,6 +15,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "stack-overflow",
+    type: "website",
     title: "Stack Overflow",
     url: "https://stackoverflow.com",
     description:
@@ -25,6 +27,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "vercel",
+    type: "website",
     title: "Vercel",
     url: "https://vercel.com",
     description:
@@ -36,6 +39,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "mdn",
+    type: "website",
     title: "MDN Web Docs",
     url: "https://developer.mozilla.org",
     description:
@@ -47,6 +51,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "react-docs",
+    type: "website",
     title: "React Documentation",
     url: "https://react.dev",
     description:
@@ -58,6 +63,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "figma",
+    type: "website",
     title: "Figma",
     url: "https://figma.com",
     description:
@@ -69,6 +75,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "dribbble",
+    type: "website",
     title: "Dribbble",
     url: "https://dribbble.com",
     description:
@@ -80,6 +87,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "notion",
+    type: "website",
     title: "Notion",
     url: "https://notion.so",
     description:
@@ -91,6 +99,7 @@ export const mockBookmarks: Bookmark[] = [
   },
   {
     id: "linear",
+    type: "website",
     title: "Linear",
     url: "https://linear.app",
     description:

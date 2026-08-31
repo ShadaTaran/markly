@@ -132,3 +132,76 @@ export function GlobeIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ArrowLeftIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+export function TvIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="2" y="7" width="20" height="14" rx="2" />
+      <path d="M17 2l-5 5-5-5" />
+    </svg>
+  );
+}
+
+export function BookOpenIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M2 5a2 2 0 0 1 2-2h4.5A3.5 3.5 0 0 1 12 6.5v13A2.5 2.5 0 0 0 9.5 17H2Z" />
+      <path d="M22 5a2 2 0 0 0-2-2h-4.5A3.5 3.5 0 0 0 12 6.5v13a2.5 2.5 0 0 1 2.5-2.5H22Z" />
+    </svg>
+  );
+}
+
+export function BookIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22Z" />
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    </svg>
+  );
+}
+
+export function GamepadIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 6h12a4 4 0 0 1 4 4v3.5a3.5 3.5 0 0 1-3.5 3.5c-.9 0-1.4-.4-2-1l-1.7-1.7a1 1 0 0 0-.7-.3h-4.2a1 1 0 0 0-.7.3L7.5 16c-.6.6-1.1 1-2 1A3.5 3.5 0 0 1 2 13.5V10a4 4 0 0 1 4-4Z" />
+      <path d="M8 9.5v3" />
+      <path d="M6.5 11h3" />
+      <circle cx="16.5" cy="9.5" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function FilmIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="2.5" y="3" width="19" height="18" rx="2" />
+      <path d="M7 3v18" />
+      <path d="M17 3v18" />
+      <path d="M2.5 8.5h5" />
+      <path d="M2.5 15.5h5" />
+      <path d="M16.5 8.5h5" />
+      <path d="M16.5 15.5h5" />
+    </svg>
+  );
+}
+
+export function ClapperboardIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M20.2 6.3 3.5 11l-.8-2.3c-.3-1 .3-2.1 1.4-2.4l13.4-4.7c1-.3 2.1.3 2.4 1.4Z" />
+      <path d="M6.3 5.6 9.2 9.3" />
+      <path d="M11.3 3.9 14.2 7.6" />
+      <path d="M2.5 11h19v8a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2Z" />
+    </svg>
+  );
+}

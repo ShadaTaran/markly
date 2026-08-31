@@ -1,13 +1,14 @@
 "use client";
 
 import { useId, useState, type FormEvent, type ReactNode } from "react";
-import type { Bookmark, BookmarkInput } from "@/types/bookmark";
-import { cn, isValidUrl, normalizeUrl, parseTags } from "@/lib/utils";
+import type { WebsiteItem, WebsiteItemInput } from "@/types/library-item";
+import { cn, parseTags } from "@/lib/utils";
+import { isValidUrl, normalizeUrl } from "@/lib/website";
 
-interface BookmarkFormProps {
-  initialValues?: Bookmark;
+interface WebsiteItemFormProps {
+  initialValues?: WebsiteItem;
   existingCategories: string[];
-  onSubmit: (values: BookmarkInput) => void;
+  onSubmit: (values: WebsiteItemInput) => void;
   onCancel: () => void;
 }
 
@@ -21,13 +22,13 @@ interface FormState {
 
 type FormErrors = Partial<Record<"title" | "url" | "category", string>>;
 
-function toFormState(bookmark?: Bookmark): FormState {
+function toFormState(item?: WebsiteItem): FormState {
   return {
-    title: bookmark?.title ?? "",
-    url: bookmark?.url ?? "",
-    description: bookmark?.description ?? "",
-    category: bookmark?.category ?? "",
-    tags: bookmark?.tags.join(", ") ?? "",
+    title: item?.title ?? "",
+    url: item?.url ?? "",
+    description: item?.description ?? "",
+    category: item?.category ?? "",
+    tags: item?.tags.join(", ") ?? "",
   };
 }
 
@@ -77,12 +78,12 @@ function Field({
   );
 }
 
-export function BookmarkForm({
+export function WebsiteItemForm({
   initialValues,
   existingCategories,
   onSubmit,
   onCancel,
-}: BookmarkFormProps) {
+}: WebsiteItemFormProps) {
   const [values, setValues] = useState<FormState>(() => toFormState(initialValues));
   const [errors, setErrors] = useState<FormErrors>({});
   const datalistId = useId();
@@ -119,35 +120,35 @@ export function BookmarkForm({
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-4">
-      <Field label="Title" htmlFor="bookmark-title" error={errors.title} required>
+      <Field label="Title" htmlFor="website-title" error={errors.title} required>
         <input
-          id="bookmark-title"
+          id="website-title"
           type="text"
           value={values.title}
           onChange={(event) => updateField("title", event.target.value)}
           aria-invalid={Boolean(errors.title)}
-          aria-describedby={errors.title ? "bookmark-title-error" : undefined}
+          aria-describedby={errors.title ? "website-title-error" : undefined}
           className={inputClass(Boolean(errors.title))}
           placeholder="e.g. GitHub"
         />
       </Field>
 
-      <Field label="URL" htmlFor="bookmark-url" error={errors.url} required>
+      <Field label="URL" htmlFor="website-url" error={errors.url} required>
         <input
-          id="bookmark-url"
+          id="website-url"
           type="text"
           value={values.url}
           onChange={(event) => updateField("url", event.target.value)}
           aria-invalid={Boolean(errors.url)}
-          aria-describedby={errors.url ? "bookmark-url-error" : undefined}
+          aria-describedby={errors.url ? "website-url-error" : undefined}
           className={inputClass(Boolean(errors.url))}
           placeholder="e.g. github.com"
         />
       </Field>
 
-      <Field label="Description" htmlFor="bookmark-description">
+      <Field label="Description" htmlFor="website-description">
         <textarea
-          id="bookmark-description"
+          id="website-description"
           value={values.description}
           onChange={(event) => updateField("description", event.target.value)}
           rows={3}
@@ -158,19 +159,19 @@ export function BookmarkForm({
 
       <Field
         label="Category"
-        htmlFor="bookmark-category"
+        htmlFor="website-category"
         error={errors.category}
         hint="Choose an existing category or type a new one."
         required
       >
         <input
-          id="bookmark-category"
+          id="website-category"
           type="text"
           list={datalistId}
           value={values.category}
           onChange={(event) => updateField("category", event.target.value)}
           aria-invalid={Boolean(errors.category)}
-          aria-describedby={errors.category ? "bookmark-category-error" : undefined}
+          aria-describedby={errors.category ? "website-category-error" : undefined}
           className={inputClass(Boolean(errors.category))}
           placeholder="e.g. Development"
         />
@@ -181,9 +182,9 @@ export function BookmarkForm({
         </datalist>
       </Field>
 
-      <Field label="Tags" htmlFor="bookmark-tags" hint="Separate tags with commas.">
+      <Field label="Tags" htmlFor="website-tags" hint="Separate tags with commas.">
         <input
-          id="bookmark-tags"
+          id="website-tags"
           type="text"
           value={values.tags}
           onChange={(event) => updateField("tags", event.target.value)}
@@ -204,7 +205,7 @@ export function BookmarkForm({
           type="submit"
           className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
-          {initialValues ? "Save Changes" : "Add Bookmark"}
+          {initialValues ? "Save Changes" : "Add Website"}
         </button>
       </div>
     </form>

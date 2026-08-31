@@ -1,2 +1,2 @@
-export const ALL_CATEGORY_FILTER = "all";
-export const FAVORITES_FILTER = "favorites";
+export const ALL_FILTER = "all" as const;
+export const FAVORITES_FILTER = "favorites" as const;

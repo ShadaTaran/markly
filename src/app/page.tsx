@@ -1,6 +1,6 @@
-import { BookmarkDashboard } from "@/components/BookmarkDashboard";
-import { mockBookmarks } from "@/data/bookmarks";
+import { LibraryDashboard } from "@/components/LibraryDashboard";
+import { starterLibraryItems } from "@/data/library-items";
 
 export default function Home() {
-  return <BookmarkDashboard bookmarks={mockBookmarks} />;
+  return <LibraryDashboard items={starterLibraryItems} />;
 }

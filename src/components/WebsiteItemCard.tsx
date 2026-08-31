@@ -1,27 +1,28 @@
 import { useState } from "react";
-import type { Bookmark } from "@/types/bookmark";
-import { cn, getDomain, getFaviconUrl } from "@/lib/utils";
-import { BookmarkActions } from "@/components/BookmarkActions";
+import type { WebsiteItem } from "@/types/library-item";
+import { cn } from "@/lib/utils";
+import { getDomain, getFaviconUrl } from "@/lib/website";
+import { LibraryItemActions } from "@/components/LibraryItemActions";
 import { GlobeIcon, StarIcon } from "@/components/icons";
 
-interface BookmarkCardProps {
-  bookmark: Bookmark;
+interface WebsiteItemCardProps {
+  item: WebsiteItem;
   activeTag: string | null;
   onToggleFavorite: (id: string) => void;
-  onEdit: (bookmark: Bookmark) => void;
-  onDeleteRequest: (bookmark: Bookmark) => void;
+  onEdit: (item: WebsiteItem) => void;
+  onDeleteRequest: (item: WebsiteItem) => void;
   onTagClick: (tag: string) => void;
 }
 
-export function BookmarkCard({
-  bookmark,
+export function WebsiteItemCard({
+  item,
   activeTag,
   onToggleFavorite,
   onEdit,
   onDeleteRequest,
   onTagClick,
-}: BookmarkCardProps) {
-  const { title, url, description, category, tags, favorite } = bookmark;
+}: WebsiteItemCardProps) {
+  const { title, url, description, category, tags, favorite } = item;
   const domain = getDomain(url);
   const [faviconFailed, setFaviconFailed] = useState(false);
 
@@ -61,7 +62,7 @@ export function BookmarkCard({
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             type="button"
-            onClick={() => onToggleFavorite(bookmark.id)}
+            onClick={() => onToggleFavorite(item.id)}
             aria-pressed={favorite}
             aria-label={favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
             className="rounded p-1.5 text-muted-foreground transition-colors hover:text-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 data-[favorite=true]:text-amber-500"
@@ -70,10 +71,11 @@ export function BookmarkCard({
             <StarIcon filled={favorite} />
           </button>
 
-          <BookmarkActions
+          <LibraryItemActions
             url={url}
-            onEdit={() => onEdit(bookmark)}
-            onDeleteRequest={() => onDeleteRequest(bookmark)}
+            linkLabel="Open Website"
+            onEdit={() => onEdit(item)}
+            onDeleteRequest={() => onDeleteRequest(item)}
           />
         </div>
       </div>
