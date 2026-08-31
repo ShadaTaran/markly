@@ -141,20 +141,16 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
   }
 
   function updateCollection(id: string, values: CollectionInput) {
-    let after: Collection | undefined;
-    setCollections((current) =>
-      current.map((collection) => {
-        if (collection.id !== id) return collection;
-        const updated = { ...collection, ...values, updatedAt: new Date().toISOString() };
-        after = updated;
-        return updated;
-      }),
-    );
+    const target = collections.find((collection) => collection.id === id);
+    if (!target) return;
 
-    if (after && userId) {
+    const updated: Collection = { ...target, ...values, updatedAt: new Date().toISOString() };
+    setCollections((current) => current.map((collection) => (collection.id === id ? updated : collection)));
+
+    if (userId) {
       const supabase = getSupabaseClient();
       if (supabase) {
-        upsertCollectionRow(supabase, after, userId).catch(() => {
+        upsertCollectionRow(supabase, updated, userId).catch(() => {
           setError("Unable to save this update.");
           hydrate();
         });

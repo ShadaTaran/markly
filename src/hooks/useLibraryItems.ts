@@ -121,16 +121,12 @@ export function useLibraryItems(
   }
 
   function toggleFavorite(id: string) {
-    let after: LibraryItem | undefined;
-    setItems((current) =>
-      current.map((item) => {
-        if (item.id !== id) return item;
-        const updated = { ...item, favorite: !item.favorite };
-        after = updated;
-        return updated;
-      }),
-    );
-    persistUpsert(after);
+    const target = items.find((item) => item.id === id);
+    if (!target) return;
+
+    const updated = { ...target, favorite: !target.favorite };
+    setItems((current) => current.map((item) => (item.id === id ? updated : item)));
+    persistUpsert(updated);
   }
 
   /**
@@ -145,111 +141,95 @@ export function useLibraryItems(
   }
 
   function quickIncrementProgress(target: MediaItem) {
+    const item = items.find((candidate) => candidate.id === target.id);
+    if (!item) return;
+
     const events: ActivityEventInput[] = [];
-    let after: MediaItem | undefined;
+    let updated: MediaItem;
 
-    setItems((current) =>
-      current.map((item) => {
-        if (item.id !== target.id) return item;
+    if (item.type === "anime" || item.type === "series") {
+      const previous = item.currentEpisode;
+      const next = (previous ?? 0) + 1;
+      const currentEpisode = item.totalEpisodes !== undefined ? Math.min(next, item.totalEpisodes) : next;
+      // Already at the known total — clamping means the value doesn't
+      // actually move, so there's nothing to persist or log.
+      if (previous === currentEpisode) return;
 
-        if (item.type === "anime" || item.type === "series") {
-          const previous = item.currentEpisode;
-          const next = (previous ?? 0) + 1;
-          const currentEpisode = item.totalEpisodes !== undefined ? Math.min(next, item.totalEpisodes) : next;
-          // Already at the known total — clamping means the value doesn't
-          // actually move, so there's nothing to persist or log.
-          if (previous === currentEpisode) return item;
+      const status = autoAdvanceStatus(previous, currentEpisode, item.status);
 
-          const status = autoAdvanceStatus(previous, currentEpisode, item.status);
+      events.push({ type: "progress_updated", itemId: item.id, progressKind: "episode", previousValue: previous, newValue: currentEpisode });
+      if (status !== item.status) {
+        events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
+      }
+      updated = { ...item, currentEpisode, status, updatedAt: new Date().toISOString() };
+    } else if (item.type === "manga") {
+      const previous = item.currentChapter;
+      const next = (previous ?? 0) + 1;
+      const currentChapter = item.totalChapters !== undefined ? Math.min(next, item.totalChapters) : next;
+      if (previous === currentChapter) return;
 
-          events.push({ type: "progress_updated", itemId: item.id, progressKind: "episode", previousValue: previous, newValue: currentEpisode });
-          if (status !== item.status) {
-            events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
-          }
-          const updated = { ...item, currentEpisode, status, updatedAt: new Date().toISOString() };
-          after = updated;
-          return updated;
-        }
+      const status = autoAdvanceStatus(previous, currentChapter, item.status);
 
-        if (item.type === "manga") {
-          const previous = item.currentChapter;
-          const next = (previous ?? 0) + 1;
-          const currentChapter = item.totalChapters !== undefined ? Math.min(next, item.totalChapters) : next;
-          if (previous === currentChapter) return item;
+      events.push({ type: "progress_updated", itemId: item.id, progressKind: "chapter", previousValue: previous, newValue: currentChapter });
+      if (status !== item.status) {
+        events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
+      }
+      updated = { ...item, currentChapter, status, updatedAt: new Date().toISOString() };
+    } else {
+      return;
+    }
 
-          const status = autoAdvanceStatus(previous, currentChapter, item.status);
-
-          events.push({ type: "progress_updated", itemId: item.id, progressKind: "chapter", previousValue: previous, newValue: currentChapter });
-          if (status !== item.status) {
-            events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
-          }
-          const updated = { ...item, currentChapter, status, updatedAt: new Date().toISOString() };
-          after = updated;
-          return updated;
-        }
-
-        return item;
-      }),
-    );
-
+    const persisted = updated;
+    setItems((current) => current.map((candidate) => (candidate.id === persisted.id ? persisted : candidate)));
     events.forEach((event) => onActivity?.(event));
-    persistUpsert(after);
+    persistUpsert(persisted);
   }
 
   function quickAdjustPlaytime(target: GameItem, delta: number) {
-    const events: ActivityEventInput[] = [];
-    let after: GameItem | undefined;
+    const found = items.find((candidate) => candidate.id === target.id);
+    if (!found || found.type !== "game") return;
+    const item = found;
 
-    setItems((current) =>
-      current.map((item) => {
-        if (item.id !== target.id || item.type !== "game") return item;
+    const previous = item.playtimeHours;
+    const playtimeHours = Math.max(0, (previous ?? 0) + delta);
+    const status = autoAdvanceStatus(previous, playtimeHours, item.status);
 
-        const previous = item.playtimeHours;
-        const playtimeHours = Math.max(0, (previous ?? 0) + delta);
-        const status = autoAdvanceStatus(previous, playtimeHours, item.status);
+    const events: ActivityEventInput[] = [
+      { type: "progress_updated", itemId: item.id, progressKind: "playtime", previousValue: previous, newValue: playtimeHours },
+    ];
+    if (status !== item.status) {
+      events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
+    }
 
-        events.push({ type: "progress_updated", itemId: item.id, progressKind: "playtime", previousValue: previous, newValue: playtimeHours });
-        if (status !== item.status) {
-          events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
-        }
-        const updated = { ...item, playtimeHours, status, updatedAt: new Date().toISOString() };
-        after = updated;
-        return updated;
-      }),
-    );
-
+    const updated: GameItem = { ...item, playtimeHours, status, updatedAt: new Date().toISOString() };
+    setItems((current) => current.map((candidate) => (candidate.id === updated.id ? updated : candidate)));
     events.forEach((event) => onActivity?.(event));
-    persistUpsert(after);
+    persistUpsert(updated);
   }
 
   function quickSetNovelProgress(target: NovelItem, rawValue: number) {
-    const events: ActivityEventInput[] = [];
-    let after: NovelItem | undefined;
+    const found = items.find((candidate) => candidate.id === target.id);
+    if (!found || found.type !== "novel") return;
+    const item = found;
 
-    setItems((current) =>
-      current.map((item) => {
-        if (item.id !== target.id || item.type !== "novel") return item;
+    const unit = item.progressUnit ?? "chapter";
+    const previous = item.progressValue;
+    const clamped = unit === "percent" ? Math.min(100, Math.max(0, rawValue)) : Math.max(0, rawValue);
 
-        const unit = item.progressUnit ?? "chapter";
-        const previous = item.progressValue;
-        const clamped = unit === "percent" ? Math.min(100, Math.max(0, rawValue)) : Math.max(0, rawValue);
+    if (previous === clamped) return;
 
-        if (previous === clamped) return item;
+    const status = autoAdvanceStatus(previous, clamped, item.status);
+    const events: ActivityEventInput[] = [
+      { type: "progress_updated", itemId: item.id, progressKind: unit, previousValue: previous, newValue: clamped },
+    ];
+    if (status !== item.status) {
+      events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
+    }
 
-        const status = autoAdvanceStatus(previous, clamped, item.status);
-
-        events.push({ type: "progress_updated", itemId: item.id, progressKind: unit, previousValue: previous, newValue: clamped });
-        if (status !== item.status) {
-          events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
-        }
-        const updated = { ...item, progressValue: clamped, progressUnit: unit, status, updatedAt: new Date().toISOString() };
-        after = updated;
-        return updated;
-      }),
-    );
-
+    const updated: NovelItem = { ...item, progressValue: clamped, progressUnit: unit, status, updatedAt: new Date().toISOString() };
+    setItems((current) => current.map((candidate) => (candidate.id === updated.id ? updated : candidate)));
     events.forEach((event) => onActivity?.(event));
-    persistUpsert(after);
+    persistUpsert(updated);
   }
 
   /**
@@ -260,7 +240,9 @@ export function useLibraryItems(
    * changed — never duplicates, never events for untouched fields.
    */
   function updateTracking(target: MediaItem, patch: TrackingUpdatePatch) {
-    let after: MediaItem | undefined;
+    const found = items.find((candidate) => candidate.id === target.id);
+    if (!found || !isMediaItem(found)) return;
+    const item = found;
 
     function applyPatch(item: MediaItem): MediaItem {
       const updatedAt = new Date().toISOString();
@@ -279,19 +261,10 @@ export function useLibraryItems(
       }
     }
 
-    setItems((current) =>
-      current.map((item) => {
-        if (item.id !== target.id || !isMediaItem(item)) return item;
-        const updated = applyPatch(item);
-        after = updated;
-        return updated;
-      }),
-    );
-
-    if (after) {
-      diffMediaTrackingEvents(target.id, target, after).forEach((event) => onActivity?.(event));
-    }
-    persistUpsert(after);
+    const updated = applyPatch(item);
+    setItems((current) => current.map((candidate) => (candidate.id === updated.id ? updated : candidate)));
+    diffMediaTrackingEvents(target.id, target, updated).forEach((event) => onActivity?.(event));
+    persistUpsert(updated);
   }
 
   function deleteItem(id: string) {
