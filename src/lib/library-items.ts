@@ -73,6 +73,8 @@ interface FilterOptions {
   activeStatus: StatusFilterValue;
   activeCategory: string;
   activeTag: string | null;
+  /** Restricts to a collection's membership when set; omit/undefined for "All Items". */
+  collectionItemIds?: Set<string>;
 }
 
 /**
@@ -99,12 +101,14 @@ function getSearchableText(item: LibraryItem): string {
 
 export function filterLibraryItems(
   items: LibraryItem[],
-  { searchQuery, activeType, activeStatus, activeCategory, activeTag }: FilterOptions,
+  { searchQuery, activeType, activeStatus, activeCategory, activeTag, collectionItemIds }: FilterOptions,
 ): LibraryItem[] {
   const query = searchQuery.trim().toLowerCase();
   const tag = activeTag ? activeTag.toLowerCase() : null;
 
   return items.filter((item) => {
+    if (collectionItemIds && !collectionItemIds.has(item.id)) return false;
+
     if (activeType !== ALL_FILTER && item.type !== activeType) return false;
 
     // Website items (and the generic placeholder type) have no tracking

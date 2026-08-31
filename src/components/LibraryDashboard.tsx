@@ -9,8 +9,14 @@ import type {
   WebsiteItem,
   WebsiteItemInput,
 } from "@/types/library-item";
+import type { Collection, CollectionInput } from "@/types/collection";
 import { Header } from "@/components/Header";
 import { FilterTabs } from "@/components/FilterTabs";
+import { CollectionFilterBar } from "@/components/CollectionFilterBar";
+import { CollectionHeader } from "@/components/CollectionHeader";
+import { CollectionDialog } from "@/components/CollectionDialog";
+import { DeleteCollectionDialog } from "@/components/DeleteCollectionDialog";
+import { CollectionMembershipDialog } from "@/components/CollectionMembershipDialog";
 import { LibraryItemGrid } from "@/components/LibraryItemGrid";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
@@ -19,6 +25,8 @@ import { XIcon } from "@/components/icons";
 import { generateId } from "@/lib/utils";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import { loadLibraryItems, saveLibraryItems } from "@/lib/library-storage";
+import { loadCollections, saveCollections } from "@/lib/collection-storage";
+import { getCollectionOptions, getValidItemIds, type CollectionFilterValue } from "@/lib/collections";
 import {
   createMediaItem,
   filterLibraryItems,
@@ -38,6 +46,8 @@ interface LibraryDashboardProps {
   items: LibraryItem[];
 }
 
+type CollectionDialogState = { mode: "create" } | { mode: "edit"; collection: Collection } | null;
+
 export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps) {
   const [items, setItems] = useState(initialItems);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -49,6 +59,13 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
   const [sortOption, setSortOption] = useState<SortOption>("newest");
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryItem | null>(null);
+
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [isCollectionsHydrated, setIsCollectionsHydrated] = useState(false);
+  const [activeCollectionId, setActiveCollectionId] = useState<CollectionFilterValue>(ALL_FILTER);
+  const [collectionDialogState, setCollectionDialogState] = useState<CollectionDialogState>(null);
+  const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<Collection | null>(null);
+  const [membershipItem, setMembershipItem] = useState<LibraryItem | null>(null);
 
   // Runs once on mount (client-only). localStorage isn't available during
   // SSR/static prerendering, so the initial render always uses the starter
@@ -74,15 +91,83 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
     saveLibraryItems(items);
   }, [items, isHydrated]);
 
-  const typeOptions = useMemo(() => getItemTypeOptions(items), [items]);
+  // Collections are a separate storage domain from the library (markly.collections
+  // vs markly.library) — a missing or corrupt collections key never touches
+  // markly.library, and vice versa. Missing key or malformed JSON both mean
+  // "no collections yet" (an empty list), never a reason to fabricate any.
+  useEffect(() => {
+    const stored = loadCollections();
+    if (stored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage) on mount; the value cannot be derived during render because it isn't available at SSR/prerender time.
+      setCollections(stored);
+    }
+    setIsCollectionsHydrated(true);
+  }, []);
 
-  // Categories and statuses are scoped to the active type — Type is the
-  // outer, fixed dimension; Status and Category are dynamic layers beneath
-  // it. Category is additionally scoped to the active status so all three
-  // filters drill down together.
+  useEffect(() => {
+    if (!isCollectionsHydrated) return;
+    saveCollections(collections);
+  }, [collections, isCollectionsHydrated]);
+
+  // Self-healing membership cleanup: whenever the actual set of library items
+  // changes (most notably a deletion), strip any collection item id that no
+  // longer refers to a real item. Runs after both stores have hydrated so it
+  // sees the real loaded items rather than the pre-hydration starter data.
+  // Bails out (returns the same array reference) when nothing needs fixing,
+  // so this never loops or persists a no-op change.
+  useEffect(() => {
+    if (!isHydrated || !isCollectionsHydrated) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reactive cross-store consistency fix (collections referencing deleted items), not derivable at render time since it must persist the corrected value, not just filter it for display.
+    setCollections((current) => {
+      let changed = false;
+      const cleaned = current.map((collection) => {
+        const validIds = getValidItemIds(collection, items);
+        if (validIds.length !== collection.itemIds.length) {
+          changed = true;
+          return { ...collection, itemIds: validIds };
+        }
+        return collection;
+      });
+      return changed ? cleaned : current;
+    });
+  }, [items, isHydrated, isCollectionsHydrated]);
+
+  const collectionOptions = useMemo(() => getCollectionOptions(collections, items), [collections, items]);
+
+  const activeCollection = useMemo(
+    () =>
+      activeCollectionId === ALL_FILTER
+        ? undefined
+        : collections.find((collection) => collection.id === activeCollectionId),
+    [collections, activeCollectionId],
+  );
+
+  // undefined activeCollection with a non-ALL_FILTER id means the selected
+  // collection was just deleted elsewhere — treat that like "All Items"
+  // rather than showing a blank/broken view.
+  const collectionItemIds = useMemo(
+    () => (activeCollection ? new Set(getValidItemIds(activeCollection, items)) : undefined),
+    [activeCollection, items],
+  );
+
+  // Collection is the outermost scope: Type/Status/Category counts and
+  // options all drill down from whichever collection (or "All Items") is
+  // currently selected, exactly as Status/Category already drill down from
+  // Type.
+  const itemsForCollection = useMemo(
+    () => (collectionItemIds ? items.filter((item) => collectionItemIds.has(item.id)) : items),
+    [items, collectionItemIds],
+  );
+
+  const typeOptions = useMemo(() => getItemTypeOptions(itemsForCollection), [itemsForCollection]);
+
   const itemsForType = useMemo(
-    () => (activeType === ALL_FILTER ? items : items.filter((item) => item.type === activeType)),
-    [items, activeType],
+    () =>
+      activeType === ALL_FILTER
+        ? itemsForCollection
+        : itemsForCollection.filter((item) => item.type === activeType),
+    [itemsForCollection, activeType],
   );
 
   const statusOptions = useMemo(() => getStatusOptions(itemsForType), [itemsForType]);
@@ -115,8 +200,15 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
 
   const filteredItems = useMemo(
     () =>
-      filterLibraryItems(items, { searchQuery, activeType, activeStatus, activeCategory, activeTag }),
-    [items, searchQuery, activeType, activeStatus, activeCategory, activeTag],
+      filterLibraryItems(items, {
+        searchQuery,
+        activeType,
+        activeStatus,
+        activeCategory,
+        activeTag,
+        collectionItemIds,
+      }),
+    [items, searchQuery, activeType, activeStatus, activeCategory, activeTag, collectionItemIds],
   );
 
   const visibleItems = useMemo(
@@ -270,8 +362,103 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
   function handleConfirmDelete() {
     if (!deleteTarget) return;
     const idToDelete = deleteTarget.id;
+    // Removing the item from `items` alone is enough — the stale-membership
+    // cleanup effect above reacts to that change and strips the id from
+    // every collection on its own, so deletion never leaves a dangling
+    // reference behind.
     setItems((current) => current.filter((item) => item.id !== idToDelete));
     setDeleteTarget(null);
+  }
+
+  function handleSelectCollection(id: string) {
+    setActiveCollectionId(id);
+  }
+
+  function handleOpenCreateCollection() {
+    setCollectionDialogState({ mode: "create" });
+  }
+
+  function handleOpenEditCollection(collection: Collection) {
+    setCollectionDialogState({ mode: "edit", collection });
+  }
+
+  function handleCloseCollectionDialog() {
+    setCollectionDialogState(null);
+  }
+
+  function handleSubmitCollection(values: CollectionInput) {
+    if (!collectionDialogState) return;
+
+    if (collectionDialogState.mode === "edit") {
+      const { id, itemIds, createdAt } = collectionDialogState.collection;
+      setCollections((current) =>
+        current.map((collection) =>
+          collection.id === id
+            ? { id, itemIds, createdAt, ...values, updatedAt: new Date().toISOString() }
+            : collection,
+        ),
+      );
+    } else {
+      const newCollection: Collection = {
+        id: generateId(),
+        itemIds: [],
+        createdAt: new Date().toISOString(),
+        ...values,
+      };
+      setCollections((current) => [...current, newCollection]);
+    }
+    setCollectionDialogState(null);
+  }
+
+  function handleRequestDeleteCollection(collection: Collection) {
+    setCollectionDeleteTarget(collection);
+  }
+
+  function handleCancelDeleteCollection() {
+    setCollectionDeleteTarget(null);
+  }
+
+  function handleConfirmDeleteCollection() {
+    if (!collectionDeleteTarget) return;
+    const idToDelete = collectionDeleteTarget.id;
+    setCollections((current) => current.filter((collection) => collection.id !== idToDelete));
+    if (activeCollectionId === idToDelete) setActiveCollectionId(ALL_FILTER);
+    setCollectionDeleteTarget(null);
+  }
+
+  function handleOpenMembershipDialog(item: LibraryItem) {
+    setMembershipItem(item);
+  }
+
+  function handleCloseMembershipDialog() {
+    setMembershipItem(null);
+  }
+
+  function handleToggleMembership(collectionId: string, checked: boolean) {
+    if (!membershipItem) return;
+    const itemId = membershipItem.id;
+    setCollections((current) =>
+      current.map((collection) => {
+        if (collection.id !== collectionId) return collection;
+        const itemIds = checked
+          ? collection.itemIds.includes(itemId)
+            ? collection.itemIds
+            : [...collection.itemIds, itemId]
+          : collection.itemIds.filter((id) => id !== itemId);
+        return { ...collection, itemIds, updatedAt: new Date().toISOString() };
+      }),
+    );
+  }
+
+  function handleQuickCreateCollection(name: string) {
+    if (!membershipItem) return;
+    const newCollection: Collection = {
+      id: generateId(),
+      name,
+      itemIds: [membershipItem.id],
+      createdAt: new Date().toISOString(),
+    };
+    setCollections((current) => [...current, newCollection]);
   }
 
   return (
@@ -284,6 +471,27 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         <div>
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Collection
+          </p>
+          <CollectionFilterBar
+            options={collectionOptions}
+            activeId={activeCollectionId}
+            onChange={handleSelectCollection}
+            onCreateCollection={handleOpenCreateCollection}
+          />
+        </div>
+
+        {activeCollection && (
+          <CollectionHeader
+            collection={activeCollection}
+            itemCount={collectionItemIds?.size ?? 0}
+            onEdit={() => handleOpenEditCollection(activeCollection)}
+            onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
+          />
+        )}
+
+        <div className="mt-4">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             Type
           </p>
@@ -351,8 +559,10 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
             activeStatus={activeStatus}
             activeCategory={activeCategory}
             activeTag={activeTag}
+            collectionSize={collectionItemIds?.size}
             onToggleFavorite={handleToggleFavorite}
             onEdit={handleOpenEditDialog}
+            onAddToCollection={handleOpenMembershipDialog}
             onDeleteRequest={handleDeleteRequest}
             onClearSearch={() => setSearchQuery("")}
             onClearTag={() => setActiveTag(null)}
@@ -380,6 +590,31 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
         item={deleteTarget}
         onCancel={handleCancelDelete}
         onConfirm={handleConfirmDelete}
+      />
+
+      <CollectionDialog
+        key={collectionDialogState?.mode === "edit" ? collectionDialogState.collection.id : "new-collection"}
+        mode={collectionDialogState?.mode ?? "create"}
+        collection={collectionDialogState?.mode === "edit" ? collectionDialogState.collection : undefined}
+        existingCollections={collections}
+        isOpen={collectionDialogState !== null}
+        onSubmit={handleSubmitCollection}
+        onClose={handleCloseCollectionDialog}
+      />
+
+      <DeleteCollectionDialog
+        collection={collectionDeleteTarget}
+        itemCount={collectionDeleteTarget ? getValidItemIds(collectionDeleteTarget, items).length : 0}
+        onCancel={handleCancelDeleteCollection}
+        onConfirm={handleConfirmDeleteCollection}
+      />
+
+      <CollectionMembershipDialog
+        item={membershipItem}
+        collections={collections}
+        onToggleMembership={handleToggleMembership}
+        onCreateCollection={handleQuickCreateCollection}
+        onClose={handleCloseMembershipDialog}
       />
     </div>
   );

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   CopyIcon,
   ExternalLinkIcon,
+  FolderIcon,
   MoreHorizontalIcon,
   PencilIcon,
   TrashIcon,
@@ -11,6 +12,7 @@ interface LibraryItemActionsProps {
   url?: string;
   linkLabel?: string;
   onEdit: () => void;
+  onAddToCollection: () => void;
   onDeleteRequest: () => void;
 }
 
@@ -18,6 +20,7 @@ export function LibraryItemActions({
   url,
   linkLabel = "Open link",
   onEdit,
+  onAddToCollection,
   onDeleteRequest,
 }: LibraryItemActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -109,6 +112,18 @@ export function LibraryItemActions({
           >
             <PencilIcon width={15} height={15} />
             Edit
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onAddToCollection();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
+          >
+            <FolderIcon width={15} height={15} />
+            Add to Collection
           </button>
           <button
             type="button"

@@ -10,6 +10,7 @@ interface WebsiteItemCardProps {
   activeTag: string | null;
   onToggleFavorite: (id: string) => void;
   onEdit: (item: WebsiteItem) => void;
+  onAddToCollection: (item: WebsiteItem) => void;
   onDeleteRequest: (item: WebsiteItem) => void;
   onTagClick: (tag: string) => void;
 }
@@ -19,6 +20,7 @@ export function WebsiteItemCard({
   activeTag,
   onToggleFavorite,
   onEdit,
+  onAddToCollection,
   onDeleteRequest,
   onTagClick,
 }: WebsiteItemCardProps) {
@@ -75,6 +77,7 @@ export function WebsiteItemCard({
             url={url}
             linkLabel="Open Website"
             onEdit={() => onEdit(item)}
+            onAddToCollection={() => onAddToCollection(item)}
             onDeleteRequest={() => onDeleteRequest(item)}
           />
         </div>

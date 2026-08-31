@@ -4,7 +4,7 @@ import { WebsiteItemCard } from "@/components/WebsiteItemCard";
 import { MediaItemCard } from "@/components/MediaItemCard";
 import { EmptyState } from "@/components/EmptyState";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
-import { GlobeIcon, SearchIcon, StarIcon } from "@/components/icons";
+import { FolderIcon, GlobeIcon, SearchIcon, StarIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import type { TypeFilterValue } from "@/lib/library-items";
 import { STATUS_FILTER_LABELS, type StatusFilterValue } from "@/lib/tracking";
@@ -17,8 +17,11 @@ interface LibraryItemGridProps {
   activeStatus: StatusFilterValue;
   activeCategory: string;
   activeTag: string | null;
+  /** Item count of the selected collection, unaffected by other filters — undefined when viewing "All Items". */
+  collectionSize?: number;
   onToggleFavorite: (id: string) => void;
   onEdit: (item: WebsiteItem | MediaItem) => void;
+  onAddToCollection: (item: LibraryItem) => void;
   onDeleteRequest: (item: LibraryItem) => void;
   onClearSearch: () => void;
   onClearTag: () => void;
@@ -34,8 +37,10 @@ export function LibraryItemGrid({
   activeStatus,
   activeCategory,
   activeTag,
+  collectionSize,
   onToggleFavorite,
   onEdit,
+  onAddToCollection,
   onDeleteRequest,
   onClearSearch,
   onClearTag,
@@ -53,6 +58,16 @@ export function LibraryItemGrid({
           icon={<GlobeIcon width={22} height={22} />}
           title="No items yet"
           description="Add something to start building your library."
+        />
+      );
+    }
+
+    if (collectionSize === 0) {
+      return (
+        <EmptyState
+          icon={<FolderIcon width={22} height={22} />}
+          title="No items in this collection yet."
+          description="Add items from your library using their actions menu."
         />
       );
     }
@@ -164,6 +179,7 @@ export function LibraryItemGrid({
                 activeTag={activeTag}
                 onToggleFavorite={onToggleFavorite}
                 onEdit={onEdit}
+                onAddToCollection={onAddToCollection}
                 onDeleteRequest={onDeleteRequest}
                 onTagClick={onTagClick}
               />
@@ -181,6 +197,7 @@ export function LibraryItemGrid({
                 activeTag={activeTag}
                 onToggleFavorite={onToggleFavorite}
                 onEdit={onEdit}
+                onAddToCollection={onAddToCollection}
                 onDeleteRequest={onDeleteRequest}
                 onTagClick={onTagClick}
                 onQuickIncrement={onQuickIncrement}

@@ -12,6 +12,7 @@ interface MediaItemCardProps {
   activeTag: string | null;
   onToggleFavorite: (id: string) => void;
   onEdit: (item: MediaItem) => void;
+  onAddToCollection: (item: MediaItem) => void;
   onDeleteRequest: (item: MediaItem) => void;
   onTagClick: (tag: string) => void;
   onQuickIncrement: (item: MediaItem) => void;
@@ -22,6 +23,7 @@ export function MediaItemCard({
   activeTag,
   onToggleFavorite,
   onEdit,
+  onAddToCollection,
   onDeleteRequest,
   onTagClick,
   onQuickIncrement,
@@ -80,6 +82,7 @@ export function MediaItemCard({
             url={sourceUrl}
             linkLabel="Open Source"
             onEdit={() => onEdit(item)}
+            onAddToCollection={() => onAddToCollection(item)}
             onDeleteRequest={() => onDeleteRequest(item)}
           />
         </div>
