@@ -31,6 +31,8 @@ import {
   type SortOption,
   type TypeFilterValue,
 } from "@/lib/library-items";
+import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
+import type { MetadataDetails } from "@/lib/metadata/types";
 
 interface LibraryDashboardProps {
   items: LibraryItem[];
@@ -41,6 +43,7 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
   const [isHydrated, setIsHydrated] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeType, setActiveType] = useState<TypeFilterValue>(ALL_FILTER);
+  const [activeStatus, setActiveStatus] = useState<StatusFilterValue>(ALL_FILTER);
   const [selectedCategory, setSelectedCategory] = useState<string>(ALL_FILTER);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [sortOption, setSortOption] = useState<SortOption>("newest");
@@ -73,17 +76,32 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
 
   const typeOptions = useMemo(() => getItemTypeOptions(items), [items]);
 
-  // Categories are scoped to the active type — Type is the outer, fixed
-  // dimension; Category is the dynamic, arbitrary one beneath it.
+  // Categories and statuses are scoped to the active type — Type is the
+  // outer, fixed dimension; Status and Category are dynamic layers beneath
+  // it. Category is additionally scoped to the active status so all three
+  // filters drill down together.
   const itemsForType = useMemo(
     () => (activeType === ALL_FILTER ? items : items.filter((item) => item.type === activeType)),
     [items, activeType],
   );
 
-  const uniqueCategories = useMemo(() => getUniqueCategories(itemsForType), [itemsForType]);
+  const statusOptions = useMemo(() => getStatusOptions(itemsForType), [itemsForType]);
 
-  // If the selected category no longer has any items in the current type
-  // scope (e.g. its last item was edited/deleted, or the type filter
+  const itemsForTypeAndStatus = useMemo(
+    () =>
+      activeStatus === ALL_FILTER
+        ? itemsForType
+        : itemsForType.filter((item) => "status" in item && item.status === activeStatus),
+    [itemsForType, activeStatus],
+  );
+
+  const uniqueCategories = useMemo(
+    () => getUniqueCategories(itemsForTypeAndStatus),
+    [itemsForTypeAndStatus],
+  );
+
+  // If the selected category no longer has any items in the current
+  // type/status scope (e.g. its last item was edited/deleted, or a filter
   // changed), fall back to "All" instead of leaving the user stuck on a
   // filter tab that vanished.
   const activeCategory =
@@ -93,11 +111,12 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
       ? selectedCategory
       : ALL_FILTER;
 
-  const categories = useMemo(() => getCategories(itemsForType), [itemsForType]);
+  const categories = useMemo(() => getCategories(itemsForTypeAndStatus), [itemsForTypeAndStatus]);
 
   const filteredItems = useMemo(
-    () => filterLibraryItems(items, { searchQuery, activeType, activeCategory, activeTag }),
-    [items, searchQuery, activeType, activeCategory, activeTag],
+    () =>
+      filterLibraryItems(items, { searchQuery, activeType, activeStatus, activeCategory, activeTag }),
+    [items, searchQuery, activeType, activeStatus, activeCategory, activeTag],
   );
 
   const visibleItems = useMemo(
@@ -113,6 +132,28 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
     );
   }
 
+  function handleQuickIncrement(target: MediaItem) {
+    setItems((current) =>
+      current.map((item) => {
+        if (item.id !== target.id) return item;
+
+        if (item.type === "anime" || item.type === "series") {
+          const next = (item.currentEpisode ?? 0) + 1;
+          const currentEpisode = item.totalEpisodes !== undefined ? Math.min(next, item.totalEpisodes) : next;
+          return { ...item, currentEpisode, updatedAt: new Date().toISOString() };
+        }
+
+        if (item.type === "manga") {
+          const next = (item.currentChapter ?? 0) + 1;
+          const currentChapter = item.totalChapters !== undefined ? Math.min(next, item.totalChapters) : next;
+          return { ...item, currentChapter, updatedAt: new Date().toISOString() };
+        }
+
+        return item;
+      }),
+    );
+  }
+
   function handleTagClick(tag: string) {
     setActiveTag((current) => (current?.toLowerCase() === tag.toLowerCase() ? null : tag));
   }
@@ -122,15 +163,41 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
   }
 
   function handleSelectType(itemType: SupportedItemType) {
-    setDialogState({ step: "form", mode: "add", itemType });
+    // Website has no metadata search — it goes straight to the form, as
+    // before. Every media type offers a catalog search step first.
+    if (itemType === "website") {
+      setDialogState({ step: "form", mode: "add", itemType });
+    } else {
+      setDialogState({ step: "search", mode: "add", itemType });
+    }
+  }
+
+  function handleSelectSearchResult(details: MetadataDetails) {
+    if (dialogState?.step !== "search") return;
+    setDialogState({ step: "form", mode: "add", itemType: dialogState.itemType, prefill: details });
+  }
+
+  function handleManualEntry() {
+    if (dialogState?.step !== "search") return;
+    setDialogState({ step: "form", mode: "add", itemType: dialogState.itemType });
   }
 
   function handleBackToPicker() {
     setDialogState({ step: "pickType" });
   }
 
+  function handleBackToSearch() {
+    if (dialogState?.step !== "form" || dialogState.mode !== "add" || dialogState.itemType === "website") return;
+    setDialogState({ step: "search", mode: "add", itemType: dialogState.itemType });
+  }
+
   function handleOpenEditDialog(item: WebsiteItem | MediaItem) {
     setDialogState({ step: "form", mode: "edit", itemType: item.type, item });
+  }
+
+  function handleToggleFullForm() {
+    if (dialogState?.step !== "form") return;
+    setDialogState({ ...dialogState, showFullForm: true });
   }
 
   function handleCloseDialog() {
@@ -234,6 +301,21 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
 
         <div className="mt-4">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Status
+          </p>
+          <FilterTabs
+            options={statusOptions}
+            activeId={activeStatus}
+            // Built entirely from ALL_FILTER + TRACKING_STATUSES in
+            // getStatusOptions, so every id it can pass back is a valid
+            // StatusFilterValue.
+            onChange={(id) => setActiveStatus(id as StatusFilterValue)}
+            ariaLabel="Filter library by status"
+          />
+        </div>
+
+        <div className="mt-4">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             Category
           </p>
           <FilterTabs
@@ -266,6 +348,7 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
             totalItems={items.length}
             searchQuery={searchQuery}
             activeType={activeType}
+            activeStatus={activeStatus}
             activeCategory={activeCategory}
             activeTag={activeTag}
             onToggleFavorite={handleToggleFavorite}
@@ -274,6 +357,7 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
             onClearSearch={() => setSearchQuery("")}
             onClearTag={() => setActiveTag(null)}
             onTagClick={handleTagClick}
+            onQuickIncrement={handleQuickIncrement}
           />
         </div>
       </main>
@@ -282,7 +366,11 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
         state={dialogState}
         existingCategories={uniqueCategories}
         onSelectType={handleSelectType}
+        onSelectSearchResult={handleSelectSearchResult}
+        onManualEntry={handleManualEntry}
         onBackToPicker={handleBackToPicker}
+        onBackToSearch={handleBackToSearch}
+        onToggleFullForm={handleToggleFullForm}
         onClose={handleCloseDialog}
         onSubmitWebsite={handleSubmitWebsite}
         onSubmitMedia={handleSubmitMedia}

@@ -2,6 +2,7 @@ import type { LibraryItem, LibraryItemType, MediaItem, MediaItemInput } from "@/
 import { ITEM_TYPE_LABELS, SUPPORTED_ITEM_TYPES } from "@/types/library-item";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import { getDomain } from "@/lib/website";
+import type { StatusFilterValue } from "@/lib/tracking";
 
 export type SortOption = "newest" | "oldest" | "az" | "za";
 
@@ -69,6 +70,7 @@ export type TypeFilterValue = LibraryItemType | typeof ALL_FILTER;
 interface FilterOptions {
   searchQuery: string;
   activeType: TypeFilterValue;
+  activeStatus: StatusFilterValue;
   activeCategory: string;
   activeTag: string | null;
 }
@@ -97,13 +99,19 @@ function getSearchableText(item: LibraryItem): string {
 
 export function filterLibraryItems(
   items: LibraryItem[],
-  { searchQuery, activeType, activeCategory, activeTag }: FilterOptions,
+  { searchQuery, activeType, activeStatus, activeCategory, activeTag }: FilterOptions,
 ): LibraryItem[] {
   const query = searchQuery.trim().toLowerCase();
   const tag = activeTag ? activeTag.toLowerCase() : null;
 
   return items.filter((item) => {
     if (activeType !== ALL_FILTER && item.type !== activeType) return false;
+
+    // Website items (and the generic placeholder type) have no tracking
+    // status at all, so a specific status filter simply excludes them.
+    if (activeStatus !== ALL_FILTER && (!("status" in item) || item.status !== activeStatus)) {
+      return false;
+    }
 
     const matchesCategory =
       activeCategory === ALL_FILTER
@@ -166,17 +174,62 @@ export function createMediaItem(
     tags: values.tags,
     imageUrl: values.imageUrl,
     sourceUrl: values.sourceUrl,
+    status: values.status,
+    rating: values.rating,
+    // Catalog/import metadata (only ever set from a search selection at
+    // creation time — never touched again by editing).
+    releaseYear: values.releaseYear,
+    catalogSource: values.catalogSource,
   };
 
   switch (type) {
     case "anime":
-    case "manga":
-    case "novel":
-    case "movie":
+      return {
+        ...base,
+        type,
+        currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
+        totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+        genres: "genres" in values ? values.genres : undefined,
+        studio: "studio" in values ? values.studio : undefined,
+      };
     case "series":
-      return { ...base, type };
+      return {
+        ...base,
+        type,
+        currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
+        totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+        genres: "genres" in values ? values.genres : undefined,
+      };
+    case "manga":
+      return {
+        ...base,
+        type,
+        currentChapter: "currentChapter" in values ? values.currentChapter : undefined,
+        totalChapters: "totalChapters" in values ? values.totalChapters : undefined,
+        genres: "genres" in values ? values.genres : undefined,
+        authors: "authors" in values ? values.authors : undefined,
+      };
+    case "novel":
+      return {
+        ...base,
+        type,
+        progressValue: "progressValue" in values ? values.progressValue : undefined,
+        progressUnit: "progressUnit" in values ? values.progressUnit : undefined,
+        authors: "authors" in values ? values.authors : undefined,
+        pageCount: "pageCount" in values ? values.pageCount : undefined,
+      };
+    case "movie":
+      return { ...base, type, genres: "genres" in values ? values.genres : undefined };
     case "game":
-      return { ...base, type, platform: "platform" in values ? values.platform : undefined };
+      return {
+        ...base,
+        type,
+        platform: "platform" in values ? values.platform : undefined,
+        playtimeHours: "playtimeHours" in values ? values.playtimeHours : undefined,
+        developer: "developer" in values ? values.developer : undefined,
+        publisher: "publisher" in values ? values.publisher : undefined,
+        catalogPlatforms: "catalogPlatforms" in values ? values.catalogPlatforms : undefined,
+      };
   }
 }
 
@@ -189,17 +242,43 @@ export function updateMediaItem(item: MediaItem, values: MediaItemInput): MediaI
     tags: values.tags,
     imageUrl: values.imageUrl,
     sourceUrl: values.sourceUrl,
+    status: values.status,
+    rating: values.rating,
     updatedAt: new Date().toISOString(),
   };
 
   switch (item.type) {
     case "anime":
-    case "manga":
-    case "novel":
-    case "movie":
     case "series":
+      return {
+        ...base,
+        type: item.type,
+        currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
+        totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+      };
+    case "manga":
+      return {
+        ...base,
+        type: item.type,
+        currentChapter: "currentChapter" in values ? values.currentChapter : undefined,
+        totalChapters: "totalChapters" in values ? values.totalChapters : undefined,
+      };
+    case "novel":
+      return {
+        ...base,
+        type: item.type,
+        progressValue: "progressValue" in values ? values.progressValue : undefined,
+        progressUnit: "progressUnit" in values ? values.progressUnit : undefined,
+        authors: "authors" in values ? values.authors : undefined,
+      };
+    case "movie":
       return { ...base, type: item.type };
     case "game":
-      return { ...base, type: item.type, platform: "platform" in values ? values.platform : undefined };
+      return {
+        ...base,
+        type: item.type,
+        platform: "platform" in values ? values.platform : undefined,
+        playtimeHours: "playtimeHours" in values ? values.playtimeHours : undefined,
+      };
   }
 }

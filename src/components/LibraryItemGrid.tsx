@@ -7,12 +7,14 @@ import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 import { GlobeIcon, SearchIcon, StarIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import type { TypeFilterValue } from "@/lib/library-items";
+import { STATUS_FILTER_LABELS, type StatusFilterValue } from "@/lib/tracking";
 
 interface LibraryItemGridProps {
   items: LibraryItem[];
   totalItems: number;
   searchQuery: string;
   activeType: TypeFilterValue;
+  activeStatus: StatusFilterValue;
   activeCategory: string;
   activeTag: string | null;
   onToggleFavorite: (id: string) => void;
@@ -21,6 +23,7 @@ interface LibraryItemGridProps {
   onClearSearch: () => void;
   onClearTag: () => void;
   onTagClick: (tag: string) => void;
+  onQuickIncrement: (item: MediaItem) => void;
 }
 
 export function LibraryItemGrid({
@@ -28,6 +31,7 @@ export function LibraryItemGrid({
   totalItems,
   searchQuery,
   activeType,
+  activeStatus,
   activeCategory,
   activeTag,
   onToggleFavorite,
@@ -36,10 +40,12 @@ export function LibraryItemGrid({
   onClearSearch,
   onClearTag,
   onTagClick,
+  onQuickIncrement,
 }: LibraryItemGridProps) {
   if (items.length === 0) {
     const trimmedQuery = searchQuery.trim();
     const hasCategoryFilter = activeCategory !== ALL_FILTER && activeCategory !== FAVORITES_FILTER;
+    const hasStatusFilter = activeStatus !== ALL_FILTER;
 
     if (totalItems === 0) {
       return (
@@ -79,6 +85,27 @@ export function LibraryItemGrid({
           icon={<StarIcon width={22} height={22} />}
           title="No favorites yet"
           description="Star items to keep your most useful ones here."
+        />
+      );
+    }
+
+    if (hasStatusFilter && (activeType !== ALL_FILTER || hasCategoryFilter)) {
+      return (
+        <EmptyState
+          icon={<SearchIcon width={22} height={22} />}
+          title="No items found"
+          description="No items match your current filters."
+        />
+      );
+    }
+
+    if (hasStatusFilter) {
+      const statusLabel = STATUS_FILTER_LABELS[activeStatus].toLowerCase();
+      return (
+        <EmptyState
+          icon={<SearchIcon width={22} height={22} />}
+          title="No items found"
+          description={`No items are currently ${statusLabel}.`}
         />
       );
     }
@@ -156,6 +183,7 @@ export function LibraryItemGrid({
                 onEdit={onEdit}
                 onDeleteRequest={onDeleteRequest}
                 onTagClick={onTagClick}
+                onQuickIncrement={onQuickIncrement}
               />
             );
           default:

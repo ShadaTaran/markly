@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { LibraryItemActions } from "@/components/LibraryItemActions";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 import { StarIcon } from "@/components/icons";
+import { getProgressInfo, getQuickIncrementInfo, getStatusLabel } from "@/lib/tracking";
 
 interface MediaItemCardProps {
   item: MediaItem;
@@ -13,6 +14,7 @@ interface MediaItemCardProps {
   onEdit: (item: MediaItem) => void;
   onDeleteRequest: (item: MediaItem) => void;
   onTagClick: (tag: string) => void;
+  onQuickIncrement: (item: MediaItem) => void;
 }
 
 export function MediaItemCard({
@@ -22,10 +24,14 @@ export function MediaItemCard({
   onEdit,
   onDeleteRequest,
   onTagClick,
+  onQuickIncrement,
 }: MediaItemCardProps) {
   const { title, description, category, tags, favorite, imageUrl, sourceUrl, type } = item;
   const [imageFailed, setImageFailed] = useState(false);
   const showImage = Boolean(imageUrl) && !imageFailed;
+  const statusLabel = getStatusLabel(item);
+  const progress = getProgressInfo(item);
+  const quickIncrement = getQuickIncrementInfo(item);
 
   return (
     <article className="group relative rounded-lg border border-border bg-surface p-4 transition-colors hover:border-foreground/25">
@@ -52,7 +58,9 @@ export function MediaItemCard({
           </span>
           <div className="min-w-0">
             <h3 className="truncate text-sm font-medium leading-tight">{title}</h3>
-            <p className="truncate text-xs text-muted-foreground">{ITEM_TYPE_LABELS[type]}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {item.releaseYear ? `${ITEM_TYPE_LABELS[type]} • ${item.releaseYear}` : ITEM_TYPE_LABELS[type]}
+            </p>
           </div>
         </div>
 
@@ -106,10 +114,48 @@ export function MediaItemCard({
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+      <div className="mt-3 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-medium text-foreground">{statusLabel}</p>
+          {quickIncrement && !quickIncrement.atMax && (
+            <button
+              type="button"
+              onClick={() => onQuickIncrement(item)}
+              aria-label={`Increment ${title} ${quickIncrement.unitLabel} progress`}
+              className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            >
+              +1
+            </button>
+          )}
+        </div>
+
+        {progress && (
+          <div>
+            <p className="text-xs text-muted-foreground">{progress.text}</p>
+            {progress.percent !== undefined && (
+              <div
+                role="img"
+                aria-label={`${Math.round(progress.percent)}% complete`}
+                className="mt-1 h-1 w-full overflow-hidden rounded-full bg-border"
+              >
+                <div
+                  className="h-full rounded-full bg-foreground/50"
+                  style={{ width: `${progress.percent}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {item.rating !== undefined && (
+          <p className="text-xs text-muted-foreground">{item.rating} / 10</p>
+        )}
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
         <span className="truncate">{category}</span>
-        {item.type === "game" && item.platform && (
-          <span className="shrink-0 truncate">{item.platform}</span>
+        {item.type === "game" && (item.developer || item.platform) && (
+          <span className="shrink-0 truncate">{item.developer || item.platform}</span>
         )}
       </div>
     </article>

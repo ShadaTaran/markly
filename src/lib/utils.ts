@@ -11,6 +11,16 @@ export function parseTags(raw: string): string[] {
   return Array.from(tags);
 }
 
+/** Like parseTags, but preserves case — for names (e.g. book authors), not tags. */
+export function parseCommaList(raw: string): string[] {
+  const items: string[] = [];
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed) items.push(trimmed);
+  }
+  return items;
+}
+
 export function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
