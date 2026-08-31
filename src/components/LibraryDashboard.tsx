@@ -18,6 +18,7 @@ import { XIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
+import { useActivity } from "@/hooks/useActivity";
 import { getCollectionOptions, getValidItemIds, type CollectionFilterValue } from "@/lib/collections";
 import {
   filterLibraryItems,
@@ -38,7 +39,8 @@ interface LibraryDashboardProps {
 type CollectionDialogState = { mode: "create" } | { mode: "edit"; collection: Collection } | null;
 
 export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps) {
-  const library = useLibraryItems(initialItems);
+  const activity = useActivity();
+  const library = useLibraryItems(initialItems, activity.logEvent);
   const { items } = library;
   const collectionsStore = useCollections(items, library.isHydrated);
   const { collections } = collectionsStore;
@@ -222,11 +224,12 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
 
   function handleConfirmDelete() {
     if (!deleteTarget) return;
-    // Removing the item alone is enough — the stale-membership cleanup
-    // effect inside useCollections reacts to that change and strips the id
-    // from every collection on its own, so deletion never leaves a
-    // dangling reference behind.
+    // Removing the item alone is enough to clean collections — the
+    // stale-membership cleanup effect inside useCollections reacts to that
+    // change and strips the id from every collection on its own. Activity
+    // history isn't self-healing the same way, so it's cleaned explicitly.
     library.deleteItem(deleteTarget.id);
+    activity.removeEventsForItem(deleteTarget.id);
     setDeleteTarget(null);
   }
 

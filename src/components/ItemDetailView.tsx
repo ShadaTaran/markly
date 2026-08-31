@@ -7,6 +7,7 @@ import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
+import { useActivity } from "@/hooks/useActivity";
 import { getDomain, getFaviconUrl } from "@/lib/website";
 import {
   formatDate,
@@ -20,6 +21,7 @@ import { ItemCover } from "@/components/ItemCover";
 import { ItemTrackingSection } from "@/components/ItemTrackingSection";
 import { ItemMetadataRows } from "@/components/ItemMetadataRows";
 import { ItemCollectionsSection } from "@/components/ItemCollectionsSection";
+import { ItemActivitySection } from "@/components/ItemActivitySection";
 import { ItemActionsMenu } from "@/components/ItemActionsMenu";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
@@ -56,7 +58,8 @@ function DetailShell({ children }: { children: React.ReactNode }) {
 
 export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const router = useRouter();
-  const library = useLibraryItems([]);
+  const activity = useActivity();
+  const library = useLibraryItems([], activity.logEvent);
   const collectionsStore = useCollections(library.items, library.isHydrated);
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteRequested, setDeleteRequested] = useState(false);
@@ -136,6 +139,10 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
 
   function handleConfirmDelete() {
     library.deleteItem(itemId);
+    // Deleting an item also removes its activity history — an orphaned
+    // history entry for a now-nonexistent item has no use, and this keeps
+    // markly.activity from growing unboundedly with dead references.
+    activity.removeEventsForItem(itemId);
     setDeleteRequested(false);
     router.push("/");
   }
@@ -193,7 +200,15 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
             )}
           </div>
 
-          {media && <ItemTrackingSection item={media} />}
+          {media && (
+            <ItemTrackingSection
+              item={media}
+              onIncrementProgress={library.quickIncrementProgress}
+              onAdjustPlaytime={library.quickAdjustPlaytime}
+              onUpdateNovelProgress={library.quickSetNovelProgress}
+              onSaveTracking={library.updateTracking}
+            />
+          )}
 
           {media && <ItemMetadataRows rows={getCatalogMetadataRows(media)} />}
 
@@ -258,6 +273,8 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
         )}
 
         <ItemCollectionsSection collections={itemCollections} onManage={() => setMembershipOpen(true)} />
+
+        <ItemActivitySection events={activity.getEventsForItem(itemId)} item={item} />
 
         {media?.catalogSource && (
           <p className="text-xs text-muted-foreground">
