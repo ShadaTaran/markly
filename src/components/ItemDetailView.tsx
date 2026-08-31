@@ -40,7 +40,7 @@ function DetailShell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <Link
-            href="/"
+            href="/library"
             className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             <ArrowLeftIcon width={16} height={16} />
@@ -83,7 +83,7 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
             This item does not exist in your local Markly library.
           </p>
           <Link
-            href="/"
+            href="/library"
             className="mt-1 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             Back to Library
@@ -144,7 +144,7 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
     // markly.activity from growing unboundedly with dead references.
     activity.removeEventsForItem(itemId);
     setDeleteRequested(false);
-    router.push("/");
+    router.push("/library");
   }
 
   function handleToggleMembership(collectionId: string, checked: boolean) {

@@ -32,13 +32,13 @@ import {
 import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
 
-interface LibraryDashboardProps {
+interface LibraryViewProps {
   items: LibraryItem[];
 }
 
 type CollectionDialogState = { mode: "create" } | { mode: "edit"; collection: Collection } | null;
 
-export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps) {
+export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const activity = useActivity();
   const library = useLibraryItems(initialItems, activity.logEvent);
   const { items } = library;
@@ -297,6 +297,7 @@ export function LibraryDashboard({ items: initialItems }: LibraryDashboardProps)
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header
+        active="library"
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         onAddItem={handleOpenAddDialog}
