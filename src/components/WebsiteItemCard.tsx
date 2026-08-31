@@ -1,7 +1,9 @@
 import { useState } from "react";
+import Link from "next/link";
 import type { WebsiteItem } from "@/types/library-item";
 import { cn } from "@/lib/utils";
 import { getDomain, getFaviconUrl } from "@/lib/website";
+import { getItemHref } from "@/lib/item-detail";
 import { LibraryItemActions } from "@/components/LibraryItemActions";
 import { GlobeIcon, StarIcon } from "@/components/icons";
 
@@ -32,7 +34,11 @@ export function WebsiteItemCard({
     <article className="group relative rounded-lg border border-border bg-surface p-4 transition-colors hover:border-foreground/25">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+          <Link
+            href={getItemHref(item)}
+            aria-label={`View details for ${title}`}
+            className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          >
             {faviconFailed ? (
               <GlobeIcon width={16} height={16} className="text-muted-foreground" />
             ) : (
@@ -45,7 +51,7 @@ export function WebsiteItemCard({
                 onError={() => setFaviconFailed(true)}
               />
             )}
-          </span>
+          </Link>
           <div className="min-w-0">
             <h3 className="truncate text-sm font-medium leading-tight">
               <a

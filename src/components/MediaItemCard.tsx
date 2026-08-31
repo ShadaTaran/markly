@@ -1,11 +1,14 @@
 import { useState } from "react";
+import Link from "next/link";
 import type { MediaItem } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { cn } from "@/lib/utils";
 import { LibraryItemActions } from "@/components/LibraryItemActions";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
+import { ProgressBar } from "@/components/ProgressBar";
 import { StarIcon } from "@/components/icons";
 import { getProgressInfo, getQuickIncrementInfo, getStatusLabel } from "@/lib/tracking";
+import { getItemHref } from "@/lib/item-detail";
 
 interface MediaItemCardProps {
   item: MediaItem;
@@ -39,12 +42,16 @@ export function MediaItemCard({
     <article className="group relative rounded-lg border border-border bg-surface p-4 transition-colors hover:border-foreground/25">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+          <Link
+            href={getItemHref(item)}
+            aria-label={`View details for ${title}`}
+            className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          >
             {showImage ? (
               // eslint-disable-next-line @next/next/no-img-element -- user-provided cover art from arbitrary hosts; next/image's optimizer isn't a good fit for this.
               <img
                 src={imageUrl}
-                alt={`${title} cover`}
+                alt=""
                 className="h-full w-full object-cover"
                 onError={() => setImageFailed(true)}
               />
@@ -57,9 +64,13 @@ export function MediaItemCard({
                 aria-hidden="true"
               />
             )}
-          </span>
+          </Link>
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-medium leading-tight">{title}</h3>
+            <h3 className="truncate text-sm font-medium leading-tight">
+              <Link href={getItemHref(item)} className="outline-none hover:underline focus-visible:underline">
+                {title}
+              </Link>
+            </h3>
             <p className="truncate text-xs text-muted-foreground">
               {item.releaseYear ? `${ITEM_TYPE_LABELS[type]} • ${item.releaseYear}` : ITEM_TYPE_LABELS[type]}
             </p>
@@ -135,18 +146,7 @@ export function MediaItemCard({
         {progress && (
           <div>
             <p className="text-xs text-muted-foreground">{progress.text}</p>
-            {progress.percent !== undefined && (
-              <div
-                role="img"
-                aria-label={`${Math.round(progress.percent)}% complete`}
-                className="mt-1 h-1 w-full overflow-hidden rounded-full bg-border"
-              >
-                <div
-                  className="h-full rounded-full bg-foreground/50"
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-            )}
+            {progress.percent !== undefined && <ProgressBar percent={progress.percent} className="mt-1" />}
           </div>
         )}
 
