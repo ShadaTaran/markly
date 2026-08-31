@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GameItem,
   LibraryItem,
@@ -17,6 +17,8 @@ import { loadLibraryItems, saveLibraryItems } from "@/lib/library-storage";
 import { createMediaItem, getUniqueCategories, normalizeCategory, updateMediaItem } from "@/lib/library-items";
 import { diffMediaTrackingEvents } from "@/lib/activity-events";
 import { isMediaItem } from "@/lib/item-detail";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import { deleteLibraryItemRow, fetchLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
 
 /** What the detail page's tracking Edit mode can change in one Save. */
 export interface TrackingUpdatePatch {
@@ -29,13 +31,13 @@ export interface TrackingUpdatePatch {
 }
 
 /**
- * Owns the markly.library store: hydration, persistence, and every mutation
- * a LibraryItem can undergo. Shared by the main dashboard and the item
- * detail page so both read/write the exact same contract rather than
- * duplicating this logic — they're independent client trees (separate
- * routes), so each calls this hook itself; correctness comes from both
- * agreeing on the same localStorage read/write behavior, not from shared
- * in-memory state.
+ * Owns every LibraryItem mutation. Signed out (userId null/undefined), this
+ * is exactly the Stage 1-15 markly.library localStorage store, unchanged —
+ * hydrate on mount, persist the whole array on every change. Signed in, it
+ * hydrates from Supabase's library_items table instead, and each mutation
+ * additionally persists just the row(s) it changed. Business logic (status
+ * auto-advance, clamping, activity diffing) is identical in both modes —
+ * only where state is read from/written to differs.
  *
  * `onActivity`, if provided, is called once per meaningful personal
  * tracking change (never for catalog/metadata-only edits) — this is the
@@ -43,35 +45,92 @@ export interface TrackingUpdatePatch {
  * path (full Edit, quick controls, card +1) reports it consistently
  * instead of each call site re-deriving what changed.
  */
-export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input: ActivityEventInput) => void) {
+export function useLibraryItems(
+  initialItems: LibraryItem[],
+  onActivity?: (input: ActivityEventInput) => void,
+  userId?: string | null,
+) {
   const [items, setItems] = useState(initialItems);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Runs once on mount (client-only). localStorage isn't available during
-  // SSR/static prerendering, so the initial render always uses the caller's
-  // starter data to keep server and client output identical (no hydration
-  // mismatch); this effect then syncs in any real stored library (or a
-  // migrated Markly V1 bookmark list) after mount.
-  useEffect(() => {
-    const stored = loadLibraryItems();
-    if (stored) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage) on mount; the value cannot be derived during render because it isn't available at SSR/prerender time.
-      setItems(stored);
+  // Guards against a slow, now-stale hydration request (e.g. from just
+  // before a sign-out) resolving after a newer one and clobbering it —
+  // only the result whose token still matches the latest call is applied.
+  const hydrationToken = useRef(0);
+
+  const hydrate = useCallback(async () => {
+    const token = ++hydrationToken.current;
+    setIsHydrated(false);
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        if (hydrationToken.current === token) {
+          setError("Cloud sync isn't configured for this deployment.");
+          setIsHydrated(true);
+        }
+        return;
+      }
+      try {
+        const cloudItems = await fetchLibraryItems(supabase, userId);
+        if (hydrationToken.current === token) {
+          setItems(cloudItems);
+          setError(null);
+        }
+      } catch {
+        if (hydrationToken.current === token) setError("Unable to load your library.");
+      }
+      if (hydrationToken.current === token) setIsHydrated(true);
+      return;
     }
-    setIsHydrated(true);
-  }, []);
 
-  // Persist after every change, but only once the initial localStorage read
-  // above has completed. Without this guard, this effect would fire on
-  // first mount with the starter/initial data and overwrite any
-  // already-stored (or just-migrated) items before they've been loaded.
+    const stored = loadLibraryItems();
+    if (hydrationToken.current === token) {
+      if (stored) setItems(stored);
+      setIsHydrated(true);
+    }
+  }, [userId]);
+
   useEffect(() => {
-    if (!isHydrated) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage or Supabase) whenever userId changes; the value can't be derived during render since both sources require an effect (localStorage isn't available at SSR/prerender time, and Supabase fetches are async).
+    hydrate();
+  }, [hydrate]);
+
+  // Persist after every change, but only in local mode — cloud mode
+  // persists the specific changed row from within each mutation below
+  // instead of re-upserting the whole array on every change.
+  useEffect(() => {
+    if (userId || !isHydrated) return;
     saveLibraryItems(items);
-  }, [items, isHydrated]);
+  }, [items, isHydrated, userId]);
+
+  /** Fire-and-forget cloud write for one changed/removed row; on failure, surfaces an error and reconciles state from the server rather than leaving an unconfirmed optimistic change in place. */
+  function persistCloudChange(operation: Promise<void>) {
+    if (!userId) return;
+    operation.catch(() => {
+      setError("Unable to save this update.");
+      hydrate();
+    });
+  }
+
+  function persistUpsert(item: LibraryItem | undefined) {
+    if (!item || !userId) return;
+    const supabase = getSupabaseClient();
+    if (supabase) persistCloudChange(upsertLibraryItem(supabase, item, userId));
+  }
 
   function toggleFavorite(id: string) {
-    setItems((current) => current.map((item) => (item.id === id ? { ...item, favorite: !item.favorite } : item)));
+    let after: LibraryItem | undefined;
+    setItems((current) =>
+      current.map((item) => {
+        if (item.id !== id) return item;
+        const updated = { ...item, favorite: !item.favorite };
+        after = updated;
+        return updated;
+      }),
+    );
+    persistUpsert(after);
   }
 
   /**
@@ -87,6 +146,7 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
 
   function quickIncrementProgress(target: MediaItem) {
     const events: ActivityEventInput[] = [];
+    let after: MediaItem | undefined;
 
     setItems((current) =>
       current.map((item) => {
@@ -106,7 +166,9 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
           if (status !== item.status) {
             events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
           }
-          return { ...item, currentEpisode, status, updatedAt: new Date().toISOString() };
+          const updated = { ...item, currentEpisode, status, updatedAt: new Date().toISOString() };
+          after = updated;
+          return updated;
         }
 
         if (item.type === "manga") {
@@ -121,7 +183,9 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
           if (status !== item.status) {
             events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
           }
-          return { ...item, currentChapter, status, updatedAt: new Date().toISOString() };
+          const updated = { ...item, currentChapter, status, updatedAt: new Date().toISOString() };
+          after = updated;
+          return updated;
         }
 
         return item;
@@ -129,10 +193,12 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     );
 
     events.forEach((event) => onActivity?.(event));
+    persistUpsert(after);
   }
 
   function quickAdjustPlaytime(target: GameItem, delta: number) {
     const events: ActivityEventInput[] = [];
+    let after: GameItem | undefined;
 
     setItems((current) =>
       current.map((item) => {
@@ -146,15 +212,19 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
         if (status !== item.status) {
           events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
         }
-        return { ...item, playtimeHours, status, updatedAt: new Date().toISOString() };
+        const updated = { ...item, playtimeHours, status, updatedAt: new Date().toISOString() };
+        after = updated;
+        return updated;
       }),
     );
 
     events.forEach((event) => onActivity?.(event));
+    persistUpsert(after);
   }
 
   function quickSetNovelProgress(target: NovelItem, rawValue: number) {
     const events: ActivityEventInput[] = [];
+    let after: NovelItem | undefined;
 
     setItems((current) =>
       current.map((item) => {
@@ -172,11 +242,14 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
         if (status !== item.status) {
           events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
         }
-        return { ...item, progressValue: clamped, progressUnit: unit, status, updatedAt: new Date().toISOString() };
+        const updated = { ...item, progressValue: clamped, progressUnit: unit, status, updatedAt: new Date().toISOString() };
+        after = updated;
+        return updated;
       }),
     );
 
     events.forEach((event) => onActivity?.(event));
+    persistUpsert(after);
   }
 
   /**
@@ -218,10 +291,16 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     if (after) {
       diffMediaTrackingEvents(target.id, target, after).forEach((event) => onActivity?.(event));
     }
+    persistUpsert(after);
   }
 
   function deleteItem(id: string) {
     setItems((current) => current.filter((item) => item.id !== id));
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) persistCloudChange(deleteLibraryItemRow(supabase, id));
+    }
   }
 
   function addWebsite(values: WebsiteItemInput) {
@@ -235,6 +314,7 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     };
     setItems((current) => [newItem, ...current]);
     onActivity?.({ type: "item_added", itemId: newItem.id });
+    persistUpsert(newItem);
   }
 
   function updateWebsite(existing: WebsiteItem, values: WebsiteItemInput) {
@@ -249,6 +329,7 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     };
     setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
     // Website has no personal tracking fields (status/progress/rating), so there's nothing to log.
+    persistUpsert(updated);
   }
 
   function addMedia(type: MediaItem["type"], values: MediaItemInput) {
@@ -256,6 +337,7 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     const newItem = createMediaItem(type, generateId(), new Date().toISOString(), normalized);
     setItems((current) => [newItem, ...current]);
     onActivity?.({ type: "item_added", itemId: newItem.id });
+    persistUpsert(newItem);
   }
 
   function updateMedia(existing: MediaItem, values: MediaItemInput) {
@@ -263,11 +345,13 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     const updated = updateMediaItem(existing, normalized);
     setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
     diffMediaTrackingEvents(updated.id, existing, updated).forEach((event) => onActivity?.(event));
+    persistUpsert(updated);
   }
 
   return {
     items,
     isHydrated,
+    error,
     toggleFavorite,
     quickIncrementProgress,
     quickAdjustPlaytime,
@@ -278,5 +362,6 @@ export function useLibraryItems(initialItems: LibraryItem[], onActivity?: (input
     updateWebsite,
     addMedia,
     updateMedia,
+    reload: hydrate,
   };
 }

@@ -1,46 +1,81 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Collection, CollectionInput } from "@/types/collection";
 import type { LibraryItem } from "@/types/library-item";
 import { generateId } from "@/lib/utils";
 import { loadCollections, saveCollections } from "@/lib/collection-storage";
 import { getValidItemIds } from "@/lib/collections";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import {
+  deleteCollectionRow,
+  fetchCollections,
+  setCollectionMembership,
+  upsertCollectionRow,
+} from "@/lib/cloud/collections";
 
 /**
- * Owns the markly.collections store: hydration, persistence, membership,
- * and CRUD. Shared by the dashboard and the item detail page, mirroring
- * useLibraryItems. Takes the current LibraryItems (and whether that store
- * has finished its own hydration) purely to self-heal stale membership
- * references — it never writes to markly.library itself.
+ * Owns collections: hydration, persistence, membership, and CRUD. Signed
+ * out (userId null/undefined), this is exactly the Stage 12 markly.collections
+ * localStorage store, unchanged. Signed in, it hydrates from and persists to
+ * Supabase's collections/collection_items tables instead.
  */
-export function useCollections(items: LibraryItem[], itemsHydrated: boolean) {
+export function useCollections(items: LibraryItem[], itemsHydrated: boolean, userId?: string | null) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hydrationToken = useRef(0);
 
-  useEffect(() => {
-    const stored = loadCollections();
-    if (stored) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage) on mount; the value cannot be derived during render because it isn't available at SSR/prerender time.
-      setCollections(stored);
+  const hydrate = useCallback(async () => {
+    const token = ++hydrationToken.current;
+    setIsHydrated(false);
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        if (hydrationToken.current === token) {
+          setError("Cloud sync isn't configured for this deployment.");
+          setIsHydrated(true);
+        }
+        return;
+      }
+      try {
+        const cloudCollections = await fetchCollections(supabase, userId);
+        if (hydrationToken.current === token) {
+          setCollections(cloudCollections);
+          setError(null);
+        }
+      } catch {
+        if (hydrationToken.current === token) setError("Unable to load your collections.");
+      }
+      if (hydrationToken.current === token) setIsHydrated(true);
+      return;
     }
-    setIsHydrated(true);
-  }, []);
+
+    const stored = loadCollections();
+    if (hydrationToken.current === token) {
+      if (stored) setCollections(stored);
+      setIsHydrated(true);
+    }
+  }, [userId]);
 
   useEffect(() => {
-    if (!isHydrated) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage or Supabase) whenever userId changes; the value can't be derived during render since both sources require an effect (localStorage isn't available at SSR/prerender time, and Supabase fetches are async).
+    hydrate();
+  }, [hydrate]);
+
+  useEffect(() => {
+    if (userId || !isHydrated) return;
     saveCollections(collections);
-  }, [collections, isHydrated]);
+  }, [collections, isHydrated, userId]);
 
   // Self-healing membership cleanup: whenever the actual set of library
   // items changes (most notably a deletion), strip any collection item id
-  // that no longer refers to a real item. Waits on itemsHydrated too, so it
-  // never runs against placeholder/starter items before the real library
-  // has loaded and mistakes not-yet-loaded items for deleted ones. Bails
-  // out (returns the same array reference) when nothing needs fixing, so
-  // this never loops or persists a no-op change.
+  // that no longer refers to a real item. Local-mode only — in cloud mode
+  // collection_items has an ON DELETE CASCADE foreign key to library_items,
+  // so the database itself guarantees membership never outlives its item.
   useEffect(() => {
-    if (!isHydrated || !itemsHydrated) return;
+    if (userId || !isHydrated || !itemsHydrated) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reactive cross-store consistency fix (collections referencing deleted items), not derivable at render time since it must persist the corrected value, not just filter it for display.
     setCollections((current) => {
@@ -55,7 +90,7 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean) {
       });
       return changed ? cleaned : current;
     });
-  }, [items, isHydrated, itemsHydrated]);
+  }, [items, isHydrated, itemsHydrated, userId]);
 
   function toggleMembership(collectionId: string, itemId: string, checked: boolean) {
     setCollections((current) =>
@@ -69,6 +104,16 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean) {
         return { ...collection, itemIds, updatedAt: new Date().toISOString() };
       }),
     );
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        setCollectionMembership(supabase, collectionId, itemId, userId, checked).catch(() => {
+          setError("Unable to save this update.");
+          hydrate();
+        });
+      }
+    }
   }
 
   function createCollection(values: CollectionInput, initialItemId?: string) {
@@ -79,26 +124,66 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean) {
       ...values,
     };
     setCollections((current) => [...current, newCollection]);
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        const persist = async () => {
+          await upsertCollectionRow(supabase, newCollection, userId);
+          if (initialItemId) await setCollectionMembership(supabase, newCollection.id, initialItemId, userId, true);
+        };
+        persist().catch(() => {
+          setError("Unable to save this update.");
+          hydrate();
+        });
+      }
+    }
   }
 
   function updateCollection(id: string, values: CollectionInput) {
+    let after: Collection | undefined;
     setCollections((current) =>
-      current.map((collection) =>
-        collection.id === id ? { ...collection, ...values, updatedAt: new Date().toISOString() } : collection,
-      ),
+      current.map((collection) => {
+        if (collection.id !== id) return collection;
+        const updated = { ...collection, ...values, updatedAt: new Date().toISOString() };
+        after = updated;
+        return updated;
+      }),
     );
+
+    if (after && userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        upsertCollectionRow(supabase, after, userId).catch(() => {
+          setError("Unable to save this update.");
+          hydrate();
+        });
+      }
+    }
   }
 
   function deleteCollection(id: string) {
     setCollections((current) => current.filter((collection) => collection.id !== id));
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        deleteCollectionRow(supabase, id).catch(() => {
+          setError("Unable to save this update.");
+          hydrate();
+        });
+      }
+    }
   }
 
   return {
     collections,
     isHydrated,
+    error,
     toggleMembership,
     createCollection,
     updateCollection,
     deleteCollection,
+    reload: hydrate,
   };
 }

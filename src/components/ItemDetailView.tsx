@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
+import { useAuth } from "@/components/AuthProvider";
+import { DataErrorBanner } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
@@ -58,9 +60,11 @@ function DetailShell({ children }: { children: React.ReactNode }) {
 
 export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const router = useRouter();
-  const activity = useActivity();
-  const library = useLibraryItems([], activity.logEvent);
-  const collectionsStore = useCollections(library.items, library.isHydrated);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const activity = useActivity(userId);
+  const library = useLibraryItems([], activity.logEvent, userId);
+  const collectionsStore = useCollections(library.items, library.isHydrated, userId);
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [membershipOpen, setMembershipOpen] = useState(false);
@@ -68,6 +72,8 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   if (!library.isHydrated) {
     return <DetailShell>{null}</DetailShell>;
   }
+
+  const loadError = library.error ?? collectionsStore.error ?? activity.error;
 
   const item = library.items.find((candidate) => candidate.id === itemId);
 
@@ -155,8 +161,20 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
     collectionsStore.createCollection({ name }, itemId);
   }
 
+  function retryLoad() {
+    library.reload();
+    collectionsStore.reload();
+    activity.reload();
+  }
+
   return (
     <DetailShell>
+      {loadError && (
+        <div className="mb-6">
+          <DataErrorBanner message={loadError} onRetry={retryLoad} />
+        </div>
+      )}
+
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="shrink-0 sm:w-56">
           {item.type === "website" ? (

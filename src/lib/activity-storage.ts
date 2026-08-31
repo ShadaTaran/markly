@@ -10,7 +10,7 @@ const ACTIVITY_STORAGE_KEY = "markly.activity";
  */
 const MAX_ACTIVITY_EVENTS = 500;
 
-const PROGRESS_KINDS: readonly ProgressKind[] = ["episode", "chapter", "page", "percent", "playtime"];
+export const PROGRESS_KINDS: readonly ProgressKind[] = ["episode", "chapter", "page", "percent", "playtime"];
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);

@@ -13,7 +13,8 @@ Markly is a responsive bookmark manager built with Next.js and TypeScript. It pr
 - Click-to-filter tags, with a clearable active-tag indicator
 - Sorting by newest, oldest, title A–Z, or title Z–A
 - Combined filtering — search, category/favorites, and tag filters all apply together
-- Persistent storage via the browser's `localStorage`, including safe handling of missing or malformed stored data
+- Persistent storage via the browser's `localStorage` by default, including safe handling of missing or malformed stored data
+- Optional account sign-up/sign-in (email/password) for cross-device sync — entirely opt-in; Markly works fully without an account
 - Light and dark themes that respect the system preference on first visit, with the choice remembered afterward
 - Responsive layout for desktop, tablet, and mobile
 
@@ -23,8 +24,9 @@ Markly is a responsive bookmark manager built with Next.js and TypeScript. It pr
 - [React](https://react.dev/)
 - [TypeScript](https://www.typescriptlang.org/)
 - [Tailwind CSS](https://tailwindcss.com/)
+- [Supabase](https://supabase.com/) (Auth + Postgres) — optional; only used when an account is configured and signed into
 
-No backend, database, or authentication is used — Markly is intentionally a small, self-contained, client-side application.
+Markly is local-first: with no Supabase project configured, it runs entirely client-side against `localStorage`, no backend required. Configuring Supabase adds optional accounts and cross-device sync on top of that same local-first experience.
 
 ## Getting Started
 
@@ -52,31 +54,54 @@ npm run typecheck
 
 ## Data Persistence
 
-Markly stores bookmarks in the browser's `localStorage`, under the `markly.bookmarks` key. The chosen theme is stored separately under `markly.theme`. This means:
+Markly has two modes:
 
-- Data is stored per browser, per device — there is no account or cloud sync.
-- Clearing your browser's site data for Markly will remove your saved bookmarks.
-- Opening Markly in a different browser or device starts with a fresh set of starter bookmarks.
+**Local mode (default, no account needed).** Your library, collections, and activity history live in the browser's `localStorage` (`markly.library`, `markly.collections`, `markly.activity`), and the theme choice lives separately under `markly.theme`. Data is stored per browser, per device — clearing site data removes it, and a different browser/device starts fresh.
+
+**Account mode (optional, requires Supabase).** Signing in switches the same library/collections/activity views to a Supabase-backed store, isolated per user via Postgres Row Level Security — nothing is shared between accounts, and the database only ever sees what the signed-in user owns. Signing out returns to local mode; local mode's data is never deleted or overwritten by signing in or out.
+
+**Bringing existing local data into an account.** The first time you sign in on a browser that already has local data, Markly offers to import it (once) into your account. Import is safe to repeat — it never creates duplicates, and your original local data is left in place afterward as a backup, not deleted.
+
+Theme is always local-only (`markly.theme`), regardless of sign-in state.
 
 ## Environment Variables
 
-None. Markly has no backend and does not require any environment configuration to run.
+Supabase is optional. With none of the variables below set, Markly runs entirely in local mode — every feature works, "Sign In" simply explains that cloud sync isn't configured.
+
+To enable accounts and cross-device sync:
+
+1. Create a project at [supabase.com](https://supabase.com/).
+2. Run the SQL in [`supabase/migrations/0001_stage16_core_schema.sql`](./supabase/migrations/0001_stage16_core_schema.sql) against it (Supabase Dashboard → SQL Editor, or `supabase db push` if you use the Supabase CLI). It creates the `library_items`, `collections`, `collection_items`, and `activity_events` tables with Row Level Security enabled, and is safe to re-run.
+3. Copy `.env.example` to `.env.local` and fill in your project's URL and anon (public) key, found under Project Settings → API:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+```
+
+Both are safe for client-side code — the anon key relies on Row Level Security, not secrecy, to protect data. Never put a Supabase **service-role** key in this project; it is never needed client-side and would bypass Row Level Security entirely.
+
+Metadata search also has its own optional, server-only API keys (`TMDB_API_KEY`, `RAWG_API_KEY`) — see the comments in `.env.example`.
 
 ## Project Structure
 
 ```
 src/
-  app/            Next.js App Router entry point (layout, page, global styles, icon)
-  components/     UI components (bookmark cards, dialogs, filters, forms, theme toggle, etc.)
-  data/           Starter/mock bookmark data used on first visit
-  lib/            Pure helper functions (filtering, sorting, categories, storage, validation)
+  app/            Next.js App Router routes (/, /library, /library/[id], /login, /signup, layout, global styles, icon)
+  components/     UI components (item cards, dialogs, filters, forms, theme toggle, auth, etc.)
+  data/           Starter/mock library data used on first visit
+  hooks/          Local/cloud-aware data hooks (useLibraryItems, useCollections, useActivity, useLocalImport)
+  lib/            Pure helper functions (filtering, sorting, storage, validation, activity formatting)
+  lib/cloud/      Supabase data-access + row/LibraryItem mapping + local→cloud migration
+  lib/supabase/   Supabase browser/server client factories and env config
   types/          Shared TypeScript types
+supabase/
+  migrations/     SQL schema + Row Level Security policies for the optional Supabase backend
 ```
 
 ## Future Improvements
 
-Possible directions beyond the current local-only version:
-
-- User accounts with cloud synchronization
-- Bookmark import/export
+- OAuth sign-in (Google/GitHub/etc.)
+- Bookmark/library import/export
 - A companion browser extension
+- Offline conflict resolution for account mode (currently last-write-wins with no merge)

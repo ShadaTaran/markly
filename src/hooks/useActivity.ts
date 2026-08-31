@@ -1,34 +1,71 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActivityEvent, ActivityEventInput } from "@/types/activity";
 import { generateId } from "@/lib/utils";
 import { loadActivity, saveActivity, MAX_ACTIVITY_EVENTS } from "@/lib/activity-storage";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import { deleteActivityEventsForItem, fetchActivityEvents, insertActivityEvent } from "@/lib/cloud/activity";
 
 /**
- * Owns the markly.activity store: hydration, persistence, and logging.
- * Independent of useLibraryItems/useCollections — activity only ever
- * references items by id, so it has no dependency on the library store
- * (and avoids a circular dependency, since useLibraryItems takes this
- * hook's logEvent as an optional callback to record tracking changes).
+ * Owns activity history: hydration, persistence, and logging. Signed out
+ * (userId null/undefined), this is exactly the Stage 14 markly.activity
+ * localStorage store, unchanged. Signed in, it hydrates from and persists
+ * to Supabase's activity_events table instead — the local store is never
+ * touched while signed in, and never read from again until sign-out.
  */
-export function useActivity() {
+export function useActivity(userId?: string | null) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const stored = loadActivity();
-    if (stored) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage) on mount; the value cannot be derived during render because it isn't available at SSR/prerender time.
-      setEvents(stored);
+  // Guards against a slow, now-stale hydration request (e.g. from just
+  // before a sign-out) resolving after a newer one and clobbering it —
+  // only the result whose token still matches the latest call is applied.
+  const hydrationToken = useRef(0);
+
+  const hydrate = useCallback(async () => {
+    const token = ++hydrationToken.current;
+    setIsHydrated(false);
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        if (hydrationToken.current === token) {
+          setError("Cloud sync isn't configured for this deployment.");
+          setIsHydrated(true);
+        }
+        return;
+      }
+      try {
+        const cloudEvents = await fetchActivityEvents(supabase, userId);
+        if (hydrationToken.current === token) {
+          setEvents(cloudEvents);
+          setError(null);
+        }
+      } catch {
+        if (hydrationToken.current === token) setError("Unable to load your activity history.");
+      }
+      if (hydrationToken.current === token) setIsHydrated(true);
+      return;
     }
-    setIsHydrated(true);
-  }, []);
+
+    const stored = loadActivity();
+    if (hydrationToken.current === token) {
+      if (stored) setEvents(stored);
+      setIsHydrated(true);
+    }
+  }, [userId]);
 
   useEffect(() => {
-    if (!isHydrated) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from an external store (localStorage or Supabase) whenever userId changes; the value can't be derived during render since both sources require an effect (localStorage isn't available at SSR/prerender time, and Supabase fetches are async).
+    hydrate();
+  }, [hydrate]);
+
+  useEffect(() => {
+    if (userId || !isHydrated) return;
     saveActivity(events);
-  }, [events, isHydrated]);
+  }, [events, isHydrated, userId]);
 
   function logEvent(input: ActivityEventInput) {
     const id = generateId();
@@ -57,15 +94,34 @@ export function useActivity() {
       const next = [event, ...current];
       return next.length > MAX_ACTIVITY_EVENTS ? next.slice(0, MAX_ACTIVITY_EVENTS) : next;
     });
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        insertActivityEvent(supabase, event, userId).catch(() => {
+          setError("Unable to save this update.");
+          // Activity is append-only, so rolling back just means dropping
+          // the one optimistic event that failed to persist.
+          setEvents((current) => current.filter((existing) => existing.id !== event.id));
+        });
+      }
+    }
   }
 
   function removeEventsForItem(itemId: string) {
     setEvents((current) => current.filter((event) => event.itemId !== itemId));
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        deleteActivityEventsForItem(supabase, itemId).catch(() => setError("Unable to save this update."));
+      }
+    }
   }
 
   function getEventsForItem(itemId: string): ActivityEvent[] {
     return events.filter((event) => event.itemId === itemId);
   }
 
-  return { events, isHydrated, logEvent, removeEventsForItem, getEventsForItem };
+  return { events, isHydrated, error, logEvent, removeEventsForItem, getEventsForItem, reload: hydrate };
 }

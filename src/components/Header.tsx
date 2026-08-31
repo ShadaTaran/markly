@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SearchBar } from "@/components/SearchBar";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AccountMenu } from "@/components/AccountMenu";
 import { PlusIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +55,7 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <ThemeToggle />
+          <AccountMenu />
           {onAddItem && (
             <button
               type="button"

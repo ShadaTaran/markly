@@ -16,6 +16,8 @@ import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
 import { SortSelect } from "@/components/SortSelect";
 import { XIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
+import { useAuth } from "@/components/AuthProvider";
+import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
@@ -39,11 +41,24 @@ interface LibraryViewProps {
 type CollectionDialogState = { mode: "create" } | { mode: "edit"; collection: Collection } | null;
 
 export function LibraryView({ items: initialItems }: LibraryViewProps) {
-  const activity = useActivity();
-  const library = useLibraryItems(initialItems, activity.logEvent);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const activity = useActivity(userId);
+  const library = useLibraryItems(initialItems, activity.logEvent, userId);
   const { items } = library;
-  const collectionsStore = useCollections(items, library.isHydrated);
+  const collectionsStore = useCollections(items, library.isHydrated, userId);
   const { collections } = collectionsStore;
+
+  // See DashboardView for why cloud mode needs an explicit loading state
+  // that local mode doesn't.
+  const loading = Boolean(userId) && (!library.isHydrated || !collectionsStore.isHydrated || !activity.isHydrated);
+  const loadError = library.error ?? collectionsStore.error ?? activity.error;
+
+  function retryLoad() {
+    library.reload();
+    collectionsStore.reload();
+    activity.reload();
+  }
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeType, setActiveType] = useState<TypeFilterValue>(ALL_FILTER);
@@ -304,106 +319,118 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
       />
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-        <div>
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Collection
-          </p>
-          <CollectionFilterBar
-            options={collectionOptions}
-            activeId={activeCollectionId}
-            onChange={handleSelectCollection}
-            onCreateCollection={handleOpenCreateCollection}
-          />
-        </div>
-
-        {activeCollection && (
-          <CollectionHeader
-            collection={activeCollection}
-            itemCount={collectionItemIds?.size ?? 0}
-            onEdit={() => handleOpenEditCollection(activeCollection)}
-            onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
-          />
+        {loadError && (
+          <div className="mb-4">
+            <DataErrorBanner message={loadError} onRetry={retryLoad} />
+          </div>
         )}
 
-        <div className="mt-4">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Type
-          </p>
-          <FilterTabs
-            options={typeOptions}
-            activeId={activeType}
-            // FilterTabs is a generic string-id tab list (shared with the
-            // Category row below); typeOptions is built by getItemTypeOptions
-            // from ALL_FILTER + SUPPORTED_ITEM_TYPES, so every id it can ever
-            // pass back here is already a valid TypeFilterValue.
-            onChange={(id) => setActiveType(id as TypeFilterValue)}
-            ariaLabel="Filter library by type"
-          />
-        </div>
+        {loading ? (
+          <DataLoadingPlaceholder label="Loading your library…" />
+        ) : (
+          <>
+            <div>
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Collection
+              </p>
+              <CollectionFilterBar
+                options={collectionOptions}
+                activeId={activeCollectionId}
+                onChange={handleSelectCollection}
+                onCreateCollection={handleOpenCreateCollection}
+              />
+            </div>
 
-        <div className="mt-4">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Status
-          </p>
-          <FilterTabs
-            options={statusOptions}
-            activeId={activeStatus}
-            // Built entirely from ALL_FILTER + TRACKING_STATUSES in
-            // getStatusOptions, so every id it can pass back is a valid
-            // StatusFilterValue.
-            onChange={(id) => setActiveStatus(id as StatusFilterValue)}
-            ariaLabel="Filter library by status"
-          />
-        </div>
+            {activeCollection && (
+              <CollectionHeader
+                collection={activeCollection}
+                itemCount={collectionItemIds?.size ?? 0}
+                onEdit={() => handleOpenEditCollection(activeCollection)}
+                onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
+              />
+            )}
 
-        <div className="mt-4">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Category
-          </p>
-          <FilterTabs
-            options={categories}
-            activeId={activeCategory}
-            onChange={setSelectedCategory}
-            ariaLabel="Filter library by category"
-          />
-        </div>
+            <div className="mt-4">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Type
+              </p>
+              <FilterTabs
+                options={typeOptions}
+                activeId={activeType}
+                // FilterTabs is a generic string-id tab list (shared with the
+                // Category row below); typeOptions is built by getItemTypeOptions
+                // from ALL_FILTER + SUPPORTED_ITEM_TYPES, so every id it can ever
+                // pass back here is already a valid TypeFilterValue.
+                onChange={(id) => setActiveType(id as TypeFilterValue)}
+                ariaLabel="Filter library by type"
+              />
+            </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          {activeTag && (
-            <button
-              type="button"
-              onClick={() => setActiveTag(null)}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-foreground/40"
-            >
-              Tag: {activeTag}
-              <XIcon width={13} height={13} />
-            </button>
-          )}
-          <div className="ml-auto">
-            <SortSelect value={sortOption} onChange={setSortOption} />
-          </div>
-        </div>
+            <div className="mt-4">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Status
+              </p>
+              <FilterTabs
+                options={statusOptions}
+                activeId={activeStatus}
+                // Built entirely from ALL_FILTER + TRACKING_STATUSES in
+                // getStatusOptions, so every id it can pass back is a valid
+                // StatusFilterValue.
+                onChange={(id) => setActiveStatus(id as StatusFilterValue)}
+                ariaLabel="Filter library by status"
+              />
+            </div>
 
-        <div className="mt-4">
-          <LibraryItemGrid
-            items={visibleItems}
-            totalItems={items.length}
-            searchQuery={searchQuery}
-            activeType={activeType}
-            activeStatus={activeStatus}
-            activeCategory={activeCategory}
-            activeTag={activeTag}
-            collectionSize={collectionItemIds?.size}
-            onToggleFavorite={library.toggleFavorite}
-            onEdit={handleOpenEditDialog}
-            onAddToCollection={handleOpenMembershipDialog}
-            onDeleteRequest={handleDeleteRequest}
-            onClearSearch={() => setSearchQuery("")}
-            onClearTag={() => setActiveTag(null)}
-            onTagClick={handleTagClick}
-            onQuickIncrement={library.quickIncrementProgress}
-          />
-        </div>
+            <div className="mt-4">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Category
+              </p>
+              <FilterTabs
+                options={categories}
+                activeId={activeCategory}
+                onChange={setSelectedCategory}
+                ariaLabel="Filter library by category"
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {activeTag && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTag(null)}
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-foreground/40"
+                >
+                  Tag: {activeTag}
+                  <XIcon width={13} height={13} />
+                </button>
+              )}
+              <div className="ml-auto">
+                <SortSelect value={sortOption} onChange={setSortOption} />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <LibraryItemGrid
+                items={visibleItems}
+                totalItems={items.length}
+                searchQuery={searchQuery}
+                activeType={activeType}
+                activeStatus={activeStatus}
+                activeCategory={activeCategory}
+                activeTag={activeTag}
+                collectionSize={collectionItemIds?.size}
+                onToggleFavorite={library.toggleFavorite}
+                onEdit={handleOpenEditDialog}
+                onAddToCollection={handleOpenMembershipDialog}
+                onDeleteRequest={handleDeleteRequest}
+                onClearSearch={() => setSearchQuery("")}
+                onClearTag={() => setActiveTag(null)}
+                onTagClick={handleTagClick}
+                onQuickIncrement={library.quickIncrementProgress}
+              />
+            </div>
+          </>
+        )}
       </main>
 
       <LibraryItemDialog
