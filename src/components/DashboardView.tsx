@@ -7,7 +7,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useActivity } from "@/hooks/useActivity";
-import { getActivityDetail, formatRelativeTime } from "@/lib/activity-format";
+import { getActivityDetail, getActivitySourceLabel, formatRelativeTime } from "@/lib/activity-format";
 import { getCurrentlyTrackingCounts, getLibraryTypeCounts, getMonthlyStats } from "@/lib/stats";
 
 interface DashboardViewProps {
@@ -98,17 +98,23 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
                 <p className="text-sm text-muted-foreground">No activity yet.</p>
               ) : (
                 <ul className="divide-y divide-border/60">
-                  {recentActivity.map(({ event, item }) => (
-                    <li key={event.id} className="py-1.5 first:pt-0 last:pb-0">
-                      <p className="text-xs text-muted-foreground">{item?.title ?? "Deleted item"}</p>
-                      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                        <span className="text-sm text-foreground">{getActivityDetail(event, item)}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatRelativeTime(event.timestamp)}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
+                  {recentActivity.map(({ event, item }) => {
+                    const sourceLabel = getActivitySourceLabel(event);
+                    return (
+                      <li key={event.id} className="py-1.5 first:pt-0 last:pb-0">
+                        <p className="text-xs text-muted-foreground">
+                          {item?.title ?? "Deleted item"}
+                          {sourceLabel && ` · ${sourceLabel}`}
+                        </p>
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                          <span className="text-sm text-foreground">{getActivityDetail(event, item)}</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {formatRelativeTime(event.timestamp)}
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </section>

@@ -49,6 +49,13 @@ export function AccountMenu() {
           />
           <div className="absolute right-0 z-20 mt-1.5 w-52 rounded-md border border-border bg-surface p-1 shadow-sm">
             <p className="truncate px-2.5 py-1.5 text-xs text-muted-foreground">{user.email}</p>
+            <Link
+              href="/settings/connections"
+              onClick={() => setOpen(false)}
+              className="block w-full rounded px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover"
+            >
+              Connections
+            </Link>
             <button
               type="button"
               onClick={() => {

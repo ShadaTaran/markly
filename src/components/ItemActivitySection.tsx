@@ -1,6 +1,6 @@
 import type { ActivityEvent } from "@/types/activity";
 import type { LibraryItem } from "@/types/library-item";
-import { getActivityDetail, getActivityLabel, formatRelativeTime } from "@/lib/activity-format";
+import { getActivityDetail, getActivityLabel, getActivitySourceLabel, formatRelativeTime } from "@/lib/activity-format";
 
 interface ItemActivitySectionProps {
   /** Already filtered to this item, newest first. */
@@ -25,9 +25,16 @@ export function ItemActivitySection({ events, item }: ItemActivitySectionProps) 
           {visible.map((event) => {
             const label = getActivityLabel(event, item);
             const detail = getActivityDetail(event, item);
+            const sourceLabel = getActivitySourceLabel(event);
             return (
               <li key={event.id} className="py-1.5 first:pt-0 last:pb-0">
-                {label && <p className="text-xs text-muted-foreground">{label}</p>}
+                {(label || sourceLabel) && (
+                  <p className="text-xs text-muted-foreground">
+                    {label}
+                    {label && sourceLabel && " · "}
+                    {sourceLabel}
+                  </p>
+                )}
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                   <span className="text-sm text-foreground">{detail}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{formatRelativeTime(event.timestamp)}</span>

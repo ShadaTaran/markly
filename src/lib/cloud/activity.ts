@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActivityEventInsert, ActivityEventRow } from "@/lib/supabase/database.types";
-import type { ActivityEvent, ProgressKind } from "@/types/activity";
+import type { ActivityEvent, ActivitySource, ProgressKind } from "@/types/activity";
 import { MAX_ACTIVITY_EVENTS, PROGRESS_KINDS } from "@/lib/activity-storage";
 import { normalizeStatus } from "@/lib/tracking";
 
@@ -23,18 +23,27 @@ function readProgressKind(data: EventData): ProgressKind | undefined {
     : undefined;
 }
 
+const ACTIVITY_SOURCES: readonly ActivitySource[] = ["anilist_sync"];
+
+function readSource(data: EventData): ActivitySource | undefined {
+  const value = data.source;
+  return typeof value === "string" && (ACTIVITY_SOURCES as readonly string[]).includes(value)
+    ? (value as ActivitySource)
+    : undefined;
+}
+
 export function toActivityEventRow(event: ActivityEvent, userId: string): ActivityEventInsert {
   let data: EventData;
 
   switch (event.type) {
     case "progress_updated":
-      data = { progressKind: event.progressKind, previousValue: event.previousValue, newValue: event.newValue };
+      data = { progressKind: event.progressKind, previousValue: event.previousValue, newValue: event.newValue, source: event.source };
       break;
     case "rating_updated":
-      data = { previousValue: event.previousValue, newValue: event.newValue };
+      data = { previousValue: event.previousValue, newValue: event.newValue, source: event.source };
       break;
     case "status_updated":
-      data = { previousValue: event.previousValue, newValue: event.newValue };
+      data = { previousValue: event.previousValue, newValue: event.newValue, source: event.source };
       break;
     case "item_added":
       data = {};
@@ -60,10 +69,10 @@ function fromActivityEventRow(row: ActivityEventRow): ActivityEvent | null {
       const progressKind = readProgressKind(data);
       const newValue = readNumber(data, "newValue");
       if (!progressKind || newValue === undefined) return null;
-      return { ...base, type: "progress_updated", progressKind, previousValue: readNumber(data, "previousValue"), newValue };
+      return { ...base, type: "progress_updated", progressKind, previousValue: readNumber(data, "previousValue"), newValue, source: readSource(data) };
     }
     case "rating_updated":
-      return { ...base, type: "rating_updated", previousValue: readNumber(data, "previousValue"), newValue: readNumber(data, "newValue") };
+      return { ...base, type: "rating_updated", previousValue: readNumber(data, "previousValue"), newValue: readNumber(data, "newValue"), source: readSource(data) };
     case "status_updated": {
       const newValueRaw = readString(data, "newValue");
       if (newValueRaw === undefined) return null;
@@ -73,6 +82,7 @@ function fromActivityEventRow(row: ActivityEventRow): ActivityEvent | null {
         type: "status_updated",
         previousValue: previousValueRaw !== undefined ? normalizeStatus(previousValueRaw) : undefined,
         newValue: normalizeStatus(newValueRaw),
+        source: readSource(data),
       };
     }
     case "item_added":

@@ -9,11 +9,15 @@ interface BaseActivityEvent {
   timestamp: string;
 }
 
+/** Present only for changes applied by an external-account sync (Stage 17); absent means a normal in-app user action. */
+export type ActivitySource = "anilist_sync";
+
 export interface ProgressActivityEvent extends BaseActivityEvent {
   type: "progress_updated";
   progressKind: ProgressKind;
   previousValue?: number;
   newValue: number;
+  source?: ActivitySource;
 }
 
 export interface RatingActivityEvent extends BaseActivityEvent {
@@ -21,12 +25,14 @@ export interface RatingActivityEvent extends BaseActivityEvent {
   /** Absent newValue means the rating was cleared/removed. */
   previousValue?: number;
   newValue?: number;
+  source?: ActivitySource;
 }
 
 export interface StatusActivityEvent extends BaseActivityEvent {
   type: "status_updated";
   previousValue?: TrackingStatus;
   newValue: TrackingStatus;
+  source?: ActivitySource;
 }
 
 export interface ItemAddedActivityEvent extends BaseActivityEvent {
