@@ -1,0 +1,14 @@
+import type { TrackingAdapter } from "./types";
+import { marklyTestReaderAdapter } from "./markly-test-reader";
+
+/**
+ * Every supported site, in one place. Stage 19 adds a real adapter (e.g.
+ * novelphoenix.ts) by writing matches()/detect() and adding it here —
+ * nothing in background/content/popup needs to change, and nothing here
+ * needs to change in them either.
+ */
+export const adapters: readonly TrackingAdapter[] = [marklyTestReaderAdapter];
+
+export function findMatchingAdapter(url: URL): TrackingAdapter | null {
+  return adapters.find((adapter) => adapter.matches(url)) ?? null;
+}

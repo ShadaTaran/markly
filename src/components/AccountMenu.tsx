@@ -56,6 +56,13 @@ export function AccountMenu() {
             >
               Connections
             </Link>
+            <Link
+              href="/settings/tracking"
+              onClick={() => setOpen(false)}
+              className="block w-full rounded px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover"
+            >
+              Auto Tracking
+            </Link>
             <button
               type="button"
               onClick={() => {

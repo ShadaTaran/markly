@@ -17,6 +17,7 @@ import { loadLibraryItems, saveLibraryItems } from "@/lib/library-storage";
 import { createMediaItem, getUniqueCategories, normalizeCategory, updateMediaItem } from "@/lib/library-items";
 import { diffMediaTrackingEvents } from "@/lib/activity-events";
 import { isMediaItem } from "@/lib/item-detail";
+import { autoAdvanceStatus } from "@/lib/tracking";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { deleteLibraryItemRow, fetchLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
 
@@ -127,17 +128,6 @@ export function useLibraryItems(
     const updated = { ...target, favorite: !target.favorite };
     setItems((current) => current.map((item) => (item.id === id ? updated : item)));
     persistUpsert(updated);
-  }
-
-  /**
-   * Only "planned" ever auto-advances, and only on a real 0 → positive
-   * transition — on_hold/dropped/completed are never touched automatically,
-   * and an already in_progress item just keeps its status. The user stays
-   * in control of every other transition (via the status select or Edit).
-   */
-  function autoAdvanceStatus(previousValue: number | undefined, nextValue: number, status: TrackingStatus): TrackingStatus {
-    const wasZero = (previousValue ?? 0) === 0;
-    return wasZero && nextValue > 0 && status === "planned" ? "in_progress" : status;
   }
 
   function quickIncrementProgress(target: MediaItem) {

@@ -69,6 +69,19 @@ export const TRACKING_STATUS_OPTIONS: Record<
   ],
 };
 
+/**
+ * Only "planned" ever auto-advances, and only on a real 0 → positive
+ * transition — on_hold/dropped/completed are never touched automatically,
+ * and an already in_progress item just keeps its status. The user (or,
+ * for auto-tracking, the detected source) stays in control of every
+ * other transition. Shared by useLibraryItems (client) and the extension
+ * progress route (server) so both apply the exact same rule.
+ */
+export function autoAdvanceStatus(previousValue: number | undefined, nextValue: number, status: TrackingStatus): TrackingStatus {
+  const wasZero = (previousValue ?? 0) === 0;
+  return wasZero && nextValue > 0 && status === "planned" ? "in_progress" : status;
+}
+
 export function getStatusLabel(item: MediaItem): string {
   const match = TRACKING_STATUS_OPTIONS[item.type].find((option) => option.value === item.status);
   return match?.label ?? STATUS_FILTER_LABELS[item.status];

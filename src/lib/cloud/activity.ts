@@ -23,7 +23,7 @@ function readProgressKind(data: EventData): ProgressKind | undefined {
     : undefined;
 }
 
-const ACTIVITY_SOURCES: readonly ActivitySource[] = ["anilist_sync"];
+const ACTIVITY_SOURCES: readonly ActivitySource[] = ["anilist_sync", "browser_extension"];
 
 function readSource(data: EventData): ActivitySource | undefined {
   const value = data.source;

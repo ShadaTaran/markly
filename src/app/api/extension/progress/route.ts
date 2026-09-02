@@ -1,0 +1,126 @@
+import { NextResponse } from "next/server";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { authenticateDevice } from "@/lib/extension/devices";
+import { getSourceByKey, recordDetection, claimSourceLink, clearBrokenLink } from "@/lib/extension/tracking-sources";
+import { attemptSmartAutoLink } from "@/lib/extension/auto-link";
+import { applyDetectionToItem } from "@/lib/extension/progress";
+import type { MediaItem } from "@/types/library-item";
+
+const TRACKABLE_TYPES: readonly MediaItem["type"][] = ["anime", "manga", "novel", "game", "movie", "series"];
+
+interface ProgressRequestBody {
+  adapterId?: string;
+  sourceKey?: string;
+  sourceUrl?: string | null;
+  sourceTitle?: string;
+  mediaType?: string;
+  progress?: { kind?: string; value?: number };
+}
+
+function isMediaType(value: string | undefined): value is MediaItem["type"] {
+  return typeof value === "string" && (TRACKABLE_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * The extension's only write path into Markly. Authenticates a device
+ * token (never a userId supplied by the request), then submits nothing
+ * more than a normalized progress observation — never an arbitrary
+ * database patch. See lib/extension/progress.ts for the monotonic
+ * (advance-only) update rule and lib/extension/tracking-sources.ts for
+ * the persistent source→item mapping this depends on.
+ */
+export async function POST(request: Request) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return NextResponse.json({ error: "not_configured" }, { status: 503 });
+
+  const authHeader = request.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
+  if (!token) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const device = await authenticateDevice(admin, token).catch(() => null);
+  if (!device) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  let body: ProgressRequestBody;
+  try {
+    body = (await request.json()) as ProgressRequestBody;
+  } catch {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  const adapterId = typeof body.adapterId === "string" ? body.adapterId.trim() : "";
+  const sourceKey = typeof body.sourceKey === "string" ? body.sourceKey.trim() : "";
+  const sourceTitle = typeof body.sourceTitle === "string" ? body.sourceTitle.trim().slice(0, 300) : "";
+  const sourceUrl = typeof body.sourceUrl === "string" ? body.sourceUrl.slice(0, 2000) : null;
+  const mediaType = body.mediaType;
+  const progressKind = typeof body.progress?.kind === "string" ? body.progress.kind : "";
+  const progressValue = typeof body.progress?.value === "number" ? body.progress.value : NaN;
+
+  if (
+    !adapterId ||
+    !sourceKey ||
+    !sourceTitle ||
+    !isMediaType(mediaType) ||
+    !progressKind ||
+    !Number.isFinite(progressValue) ||
+    progressValue < 0
+  ) {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  try {
+    const existing = await getSourceByKey(admin, device.userId, adapterId, sourceKey);
+
+    const detected = await recordDetection(admin, device.userId, {
+      adapterId,
+      sourceKey,
+      sourceTitle,
+      sourceUrl,
+      mediaType,
+      progress: { kind: progressKind, value: progressValue },
+    });
+
+    if (existing && !existing.auto_track_enabled) {
+      return NextResponse.json({ status: "tracking_disabled" });
+    }
+
+    let libraryItemId = existing?.library_item_id ?? null;
+    let autoLinked = false;
+
+    if (!libraryItemId) {
+      // No established mapping yet — either a brand-new source, or one
+      // detected before this feature existed (previously stuck at
+      // needs_link forever). Try a smart auto-link before falling back to
+      // manual linking; never re-attempted once a mapping exists (see
+      // lib/extension/auto-link.ts for the matching rules).
+      const outcome = await attemptSmartAutoLink(admin, device.userId, mediaType, sourceTitle);
+      if (outcome.kind !== "matched") {
+        return NextResponse.json({ status: "needs_link", reason: outcome.kind });
+      }
+      // Atomic claim: if a concurrent identical first detection already
+      // won this link, this returns *that* id rather than silently
+      // trusting our own (deterministically identical, in the ordinary
+      // case) candidate — see claimSourceLink.
+      libraryItemId = await claimSourceLink(admin, device.userId, detected.id, outcome.libraryItemId);
+      autoLinked = true;
+    }
+
+    // The read, the compare, the write, and the Activity insert(s) all
+    // happen atomically inside applyDetectionToItem's database RPC — no
+    // separate pre-fetch here, since a fetch-then-decide-in-JS step is
+    // exactly the race this replaced (see lib/extension/progress.ts).
+    const result = await applyDetectionToItem(admin, device.userId, libraryItemId, mediaType, progressKind, progressValue);
+
+    if (result.status === "item_not_found") {
+      await clearBrokenLink(admin, detected.id);
+      return NextResponse.json({ status: "needs_link", reason: "no_match" });
+    }
+
+    return NextResponse.json({
+      status: result.status,
+      currentValue: result.currentValue,
+      ...(autoLinked ? { autoLinked: true } : {}),
+    });
+  } catch {
+    return NextResponse.json({ error: "tracking_failed" }, { status: 502 });
+  }
+}

@@ -1,8 +1,8 @@
 /**
  * Reads the public Supabase config. Both values are safe for client code —
  * the anon key is meant to be public and relies on Row Level Security, not
- * secrecy, to protect data. Never add the service-role key here or anywhere
- * client-reachable.
+ * secrecy, to protect data. Never add the Secret API Key (or its legacy
+ * service-role equivalent) here or anywhere client-reachable.
  *
  * Returns null (rather than throwing) when unset, so the app can fail soft
  * into local-only mode instead of crashing every page when Supabase simply

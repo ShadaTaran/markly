@@ -91,7 +91,15 @@ export function getActivityDetail(event: ActivityEvent, item: LibraryItem | unde
 
 /** Small trailing annotation for events applied by an external sync (Stage 17) — undefined for every normal in-app action, which is most events. */
 export function getActivitySourceLabel(event: ActivityEvent): string | undefined {
-  return "source" in event && event.source === "anilist_sync" ? "Synced from AniList" : undefined;
+  if (!("source" in event)) return undefined;
+  switch (event.source) {
+    case "anilist_sync":
+      return "Synced from AniList";
+    case "browser_extension":
+      return "Tracked automatically";
+    default:
+      return undefined;
+  }
 }
 
 /** Compact human-readable relative time — e.g. "3m ago", "2h ago", "Yesterday". */

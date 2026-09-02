@@ -9,8 +9,8 @@ interface BaseActivityEvent {
   timestamp: string;
 }
 
-/** Present only for changes applied by an external-account sync (Stage 17); absent means a normal in-app user action. */
-export type ActivitySource = "anilist_sync";
+/** Present only for changes applied by something other than a direct in-app user action: an external-account sync (Stage 17), or the browser extension's auto-tracking (Stage 18). Absent means a normal in-app user action. */
+export type ActivitySource = "anilist_sync" | "browser_extension";
 
 export interface ProgressActivityEvent extends BaseActivityEvent {
   type: "progress_updated";
