@@ -4,17 +4,18 @@ import { useEffect, useState } from "react";
 import type { MediaItem, MetadataProvider } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { getMetadataProvider } from "@/lib/metadata/registry";
+import { partitionByRelevance } from "@/lib/metadata/relevance";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 400;
 
-const PROVIDER_ATTRIBUTION: Record<MetadataProvider, string> = {
-  anilist: "Data from AniList",
-  "open-library": "Data from Open Library",
-  tmdb: "Data from TMDB",
-  rawg: "Data from RAWG",
+const PROVIDER_SOURCE_NAME: Record<MetadataProvider, string> = {
+  anilist: "AniList",
+  "open-library": "Open Library",
+  tmdb: "TMDB",
+  rawg: "RAWG",
 };
 
 type SearchState =
@@ -24,16 +25,39 @@ type SearchState =
   | { status: "empty" }
   | { status: "error" };
 
+/**
+ * Offers the work a browser-extension detection already identified — a
+ * persistent, always-visible section, never conditioned on what catalog
+ * search happens to return (see README "Add or Link"). The detected
+ * source is authoritative for title/progress/site; catalog search is
+ * optional *enrichment* on top of it, never a gate in front of it — a
+ * page of irrelevant Open Library fuzzy matches must never hide this, and
+ * neither can zero results or a provider outage. The user is never asked
+ * to retype a title Markly already has.
+ */
+export interface DetectedFallback {
+  title: string;
+  sourceLabel: string;
+  progressLabel?: string;
+  onAddAndTrack: () => void;
+  onEditDetails: () => void;
+  busy: boolean;
+}
+
 interface MetadataSearchPanelProps {
   itemType: MediaItem["type"];
   onSelect: (details: MetadataDetails) => void;
   onManualEntry: () => void;
+  /** Pre-fills the search box (e.g. from a browser-extension-detected work title) — the search still runs through the normal debounce, it just starts already typed in. */
+  initialQuery?: string;
+  detectedFallback?: DetectedFallback;
 }
 
-export function MetadataSearchPanel({ itemType, onSelect, onManualEntry }: MetadataSearchPanelProps) {
-  const [query, setQuery] = useState("");
+export function MetadataSearchPanel({ itemType, onSelect, onManualEntry, initialQuery, detectedFallback }: MetadataSearchPanelProps) {
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [state, setState] = useState<SearchState>({ status: "idle" });
   const [selectingId, setSelectingId] = useState<string | null>(null);
+  const [showUnrelated, setShowUnrelated] = useState(false);
   const provider = getMetadataProvider(itemType);
   const label = ITEM_TYPE_LABELS[itemType];
 
@@ -55,6 +79,7 @@ export function MetadataSearchPanel({ itemType, onSelect, onManualEntry }: Metad
     // a slow "fri" response can never overwrite a faster "frieren" result.
     const timeout = setTimeout(() => {
       setState({ status: "loading" });
+      setShowUnrelated(false);
       provider
         .search(trimmedQuery, controller.signal)
         .then((results) => {
@@ -91,6 +116,31 @@ export function MetadataSearchPanel({ itemType, onSelect, onManualEntry }: Metad
     }
   }
 
+  // A provider like combinedNovelProvider can draw results from more than
+  // one catalog in a single search — attribution reflects whichever
+  // sources actually contributed to the results on screen, not just the
+  // adapter's own top-level id (which, for a combined provider, is only a
+  // fallback label for the idle/error states below).
+  const attributionSources =
+    displayState.status === "success"
+      ? Array.from(new Set(displayState.results.map((result) => PROVIDER_SOURCE_NAME[result.provider])))
+      : [PROVIDER_SOURCE_NAME[provider.id]];
+
+  // Novel is the one type actually querying more than one catalog at once
+  // (combined-novel.ts) — named explicitly here so the loading message can
+  // say "Searching Open Library and AniList…" rather than naming only the
+  // combined provider's arbitrary fallback id.
+  const loadingSources: MetadataProvider[] = itemType === "novel" ? ["open-library", "anilist"] : [provider.id];
+
+  // Deterministic relevance ranking (see lib/metadata/relevance.ts) — for
+  // *display* only. A provider returning a fuzzy/unrelated result (Open
+  // Library's free-text search in particular) must never be presented as
+  // a likely match; it's set aside behind "Show more" instead of hidden
+  // outright. This never affects Smart Auto-Link, which has its own,
+  // separate, exact-match-only comparison.
+  const relevancePartition =
+    displayState.status === "success" ? partitionByRelevance(trimmedQuery, displayState.results, (r) => r.title) : null;
+
   return (
     <div className="space-y-4">
       <div>
@@ -108,38 +158,116 @@ export function MetadataSearchPanel({ itemType, onSelect, onManualEntry }: Metad
         />
       </div>
 
-      <div aria-live="polite" className="min-h-16">
-        {displayState.status === "idle" && (
-          <p className="text-sm text-muted-foreground">Search the catalog, or enter details yourself.</p>
-        )}
-        {displayState.status === "loading" && <p className="text-sm text-muted-foreground">Searching…</p>}
-        {displayState.status === "empty" && (
-          <p className="text-sm text-muted-foreground">{`No results found for "${trimmedQuery}".`}</p>
-        )}
-        {displayState.status === "error" && (
-          <p className="text-sm text-muted-foreground">
-            Unable to search right now. You can still enter this item manually.
+      {/*
+       * Detected-from-your-reading is persistent and independent of
+       * catalog search state — it must remain available whether the
+       * catalog returns zero, one, or ten results, fuzzy/irrelevant
+       * matches, or errors out entirely (see DetectedFallback's doc
+       * comment). Rendered unconditionally on `detectedFallback` alone,
+       * never on `displayState`.
+       */}
+      {detectedFallback && (
+        <div className="rounded-md border border-border bg-surface p-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Detected from your reading</p>
+          <p className="mt-1.5 text-sm font-medium text-foreground">{detectedFallback.title}</p>
+          <p className="text-xs text-muted-foreground">
+            {detectedFallback.sourceLabel}
+            {detectedFallback.progressLabel ? ` · ${detectedFallback.progressLabel}` : ""}
           </p>
+          <div className="mt-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={detectedFallback.onAddAndTrack}
+              disabled={detectedFallback.busy}
+              className="rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
+            >
+              {detectedFallback.busy ? "Adding…" : "Add & Track"}
+            </button>
+            <button
+              type="button"
+              onClick={detectedFallback.onEditDetails}
+              disabled={detectedFallback.busy}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover disabled:opacity-60"
+            >
+              Edit Details
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div>
+        {detectedFallback && (
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Catalog matches</p>
         )}
-        {displayState.status === "success" && (
-          <ul className="max-h-72 space-y-1 overflow-y-auto">
-            {displayState.results.map((result) => (
-              <li key={result.externalId}>
-                <ResultRow
-                  result={result}
-                  itemType={itemType}
-                  onSelect={() => handleSelect(result)}
-                  busy={selectingId === result.externalId}
-                  disabled={selectingId !== null}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+        <div aria-live="polite" className="min-h-16">
+          {displayState.status === "idle" && (
+            <p className="text-sm text-muted-foreground">
+              {detectedFallback ? "Search for richer metadata, or use the detected work above." : "Search the catalog, or enter details yourself."}
+            </p>
+          )}
+          {displayState.status === "loading" && (
+            <p className="text-sm text-muted-foreground">{`Searching ${loadingSources.map((id) => PROVIDER_SOURCE_NAME[id]).join(" and ")}…`}</p>
+          )}
+          {displayState.status === "empty" && (
+            <p className="text-sm text-muted-foreground">{`No results found for "${trimmedQuery}".`}</p>
+          )}
+          {displayState.status === "error" && (
+            <p className="text-sm text-muted-foreground">
+              {detectedFallback
+                ? "Catalog search unavailable — this doesn't affect the detected work above."
+                : "Unable to search right now. You can still enter this item manually."}
+            </p>
+          )}
+          {relevancePartition && relevancePartition.relevant.length === 0 && relevancePartition.unrelated.length > 0 && (
+            <p className="text-sm text-muted-foreground">{`No closely matching results for "${trimmedQuery}".`}</p>
+          )}
+          {relevancePartition && relevancePartition.relevant.length > 0 && (
+            <ul className="max-h-72 space-y-1 overflow-y-auto">
+              {relevancePartition.relevant.map((result) => (
+                <li key={result.externalId}>
+                  <ResultRow
+                    result={result}
+                    itemType={itemType}
+                    onSelect={() => handleSelect(result)}
+                    busy={selectingId === result.externalId}
+                    disabled={selectingId !== null}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          {relevancePartition && relevancePartition.unrelated.length > 0 && (
+            <div className="mt-1.5">
+              {!showUnrelated ? (
+                <button
+                  type="button"
+                  onClick={() => setShowUnrelated(true)}
+                  className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  {`Show ${relevancePartition.unrelated.length} more result${relevancePartition.unrelated.length === 1 ? "" : "s"}`}
+                </button>
+              ) : (
+                <ul className="max-h-72 space-y-1 overflow-y-auto">
+                  {relevancePartition.unrelated.map((result) => (
+                    <li key={result.externalId}>
+                      <ResultRow
+                        result={result}
+                        itemType={itemType}
+                        onSelect={() => handleSelect(result)}
+                        busy={selectingId === result.externalId}
+                        disabled={selectingId !== null}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
-        <p className="text-xs text-muted-foreground">{PROVIDER_ATTRIBUTION[provider.id]}</p>
+        <p className="text-xs text-muted-foreground">{`Data from ${attributionSources.join(" and ")}`}</p>
         <button
           type="button"
           onClick={onManualEntry}
@@ -167,6 +295,11 @@ function ResultRow({ result, itemType, onSelect, busy, disabled }: ResultRowProp
   const metaParts: string[] = [];
   if (result.year) metaParts.push(String(result.year));
   metaParts.push(ITEM_TYPE_LABELS[itemType]);
+  // Novel is the one type backed by more than one catalog (see
+  // combined-novel.ts) — showing which one this particular result came
+  // from helps distinguish "Open Library" (traditionally published) from
+  // "AniList" (light novel) results sitting side by side.
+  if (itemType === "novel") metaParts.push(PROVIDER_SOURCE_NAME[result.provider]);
 
   const progressPart =
     itemType === "manga" && result.totalChapters !== undefined

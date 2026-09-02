@@ -39,7 +39,12 @@ export type ProgressApiStatus =
   | "incompatible_media_type"
   | "item_not_found"
   | "unauthorized"
-  | "error";
+  | "error"
+  // Extension-local only — the server never returns this. Set by the
+  // service worker when the content script ran but neither an adapter
+  // nor universal detection could confidently identify progress; no API
+  // call is ever made for this case.
+  | "low_confidence";
 
 /** Only meaningful when status is "needs_link" — distinguishes "multiple possible items" from "nothing matches yet" so the popup can show the right copy (see popup.ts). */
 export type NeedsLinkReason = "ambiguous" | "no_match";

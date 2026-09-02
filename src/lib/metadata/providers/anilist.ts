@@ -6,9 +6,9 @@ import { normalizeDescription, normalizeStringArray } from "@/lib/metadata/sanit
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 
 const SEARCH_QUERY = `
-  query ($search: String, $type: MediaType) {
+  query ($search: String, $type: MediaType, $formatIn: [MediaFormat]) {
     Page(page: 1, perPage: 8) {
-      media(search: $search, type: $type, sort: SEARCH_MATCH) {
+      media(search: $search, type: $type, format_in: $formatIn, sort: SEARCH_MATCH) {
         id
         title { english romaji }
         description(asHtml: false)
@@ -41,11 +41,12 @@ async function searchAniList(
   query: string,
   mediaType: "ANIME" | "MANGA",
   signal: AbortSignal,
+  formatIn?: string[],
 ): Promise<AniListMedia[]> {
   const response = await fetch(ANILIST_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ query: SEARCH_QUERY, variables: { search: query, type: mediaType } }),
+    body: JSON.stringify({ query: SEARCH_QUERY, variables: { search: query, type: mediaType, formatIn } }),
     signal,
   });
 
@@ -55,10 +56,11 @@ async function searchAniList(
   return json.data?.Page?.media ?? [];
 }
 
-function toDetails(media: AniListMedia, kind: "anime" | "manga"): MetadataDetails {
-  // AniList has no dedicated "author" field for manga; the top staff
-  // credits by relevance (typically the story/art creator(s)) are the
-  // closest reliable approximation, so this is a best-effort mapping.
+function toDetails(media: AniListMedia, kind: "anime" | "manga" | "novel"): MetadataDetails {
+  // AniList has no dedicated "author" field for manga or novel entries;
+  // the top staff credits by relevance (for a novel, typically just the
+  // author; for manga, the story/art creator(s)) are the closest reliable
+  // approximation, so this is a best-effort mapping either way.
   const staffNames = normalizeStringArray(media.staff?.nodes.map((node) => node.name.full ?? ""));
 
   return {
@@ -72,7 +74,7 @@ function toDetails(media: AniListMedia, kind: "anime" | "manga"): MetadataDetail
     totalEpisodes: kind === "anime" ? media.episodes ?? undefined : undefined,
     totalChapters: kind === "manga" ? media.chapters ?? undefined : undefined,
     studio: kind === "anime" ? media.studios?.nodes[0]?.name : undefined,
-    authors: kind === "manga" ? staffNames : undefined,
+    authors: kind === "manga" || kind === "novel" ? staffNames : undefined,
   };
 }
 
@@ -89,5 +91,29 @@ export const anilistMangaProvider: MetadataProviderAdapter = {
   async search(query, signal) {
     const media = await searchAniList(query, "MANGA", signal);
     return media.map((item) => toDetails(item, "manga"));
+  },
+};
+
+/**
+ * AniList's `MediaType: MANGA` catalog holds both comics (`format: MANGA`)
+ * and novels (`format: NOVEL`/`ONE_SHOT`) — this queries only the latter,
+ * i.e. light novels. Confirmed against the live public API (not assumed):
+ * this reliably finds officially-published light novels with a real
+ * NOVEL-format entry (e.g. "Mushoku Tensei", "Overlord"), but AniList has
+ * *no* novel-format entry at all for many hugely popular raw/fan-
+ * translated web novels that were never formally published as a book
+ * (e.g. "Reverend Insanity", "The Perfect Run" both return zero results
+ * here) — only their manga/manhua adaptation, if one exists, which is a
+ * different medium and not what this provider returns. There is no
+ * public, unauthenticated, ToS-compliant catalog API for that raw-web-
+ * novel case (NovelUpdates, the closest thing, has no public API and
+ * disallows scraping) — see combined-novel.ts and the root README for the
+ * honest scope of what this expands vs. doesn't.
+ */
+export const anilistLightNovelProvider: MetadataProviderAdapter = {
+  id: "anilist",
+  async search(query, signal) {
+    const media = await searchAniList(query, "MANGA", signal, ["NOVEL", "ONE_SHOT"]);
+    return media.map((item) => toDetails(item, "novel"));
   },
 };

@@ -10,7 +10,7 @@ import { Dialog } from "@/components/Dialog";
 import { ItemTypePicker } from "@/components/ItemTypePicker";
 import { WebsiteItemForm } from "@/components/WebsiteItemForm";
 import { MediaItemForm } from "@/components/MediaItemForm";
-import { MetadataSearchPanel } from "@/components/MetadataSearchPanel";
+import { MetadataSearchPanel, type DetectedFallback } from "@/components/MetadataSearchPanel";
 import { CatalogTrackingForm, type PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import {
@@ -25,7 +25,7 @@ import {
 
 export type DialogState =
   | { step: "pickType" }
-  | { step: "search"; mode: "add"; itemType: MediaItem["type"] }
+  | { step: "search"; mode: "add"; itemType: MediaItem["type"]; initialQuery?: string }
   | { step: "form"; mode: "add"; itemType: SupportedItemType; prefill?: MetadataDetails; showFullForm?: boolean }
   | { step: "form"; mode: "edit"; itemType: SupportedItemType; item: WebsiteItem | MediaItem; showFullForm?: boolean }
   | null;
@@ -42,6 +42,10 @@ interface LibraryItemDialogProps {
   onClose: () => void;
   onSubmitWebsite: (values: WebsiteItemInput) => void;
   onSubmitMedia: (values: MediaItemInput) => void;
+  /** Offered on the search step when catalog search comes up empty/errors — see MetadataSearchPanel. Never passed by the plain "Add Item" flow, which has no detected-work concept. */
+  detectedFallback?: DetectedFallback;
+  /** Starting tracking values (status/progress) for a brand-new catalog-backed item — defaults to `{ status: "planned" }` (the plain Add Item flow's original behavior) when not given, so a caller with a detected progress value can seed the compact review form with it instead of leaving it blank. */
+  initialTrackingForAdd?: PersonalTrackingValues;
 }
 
 export function LibraryItemDialog({
@@ -56,6 +60,8 @@ export function LibraryItemDialog({
   onClose,
   onSubmitWebsite,
   onSubmitMedia,
+  detectedFallback,
+  initialTrackingForAdd,
 }: LibraryItemDialogProps) {
   const title =
     state?.step === "search"
@@ -101,8 +107,10 @@ export function LibraryItemDialog({
         <MetadataSearchPanel
           key={state.itemType}
           itemType={state.itemType}
+          initialQuery={state.initialQuery}
           onSelect={onSelectSearchResult}
           onManualEntry={onManualEntry}
+          detectedFallback={detectedFallback}
         />
       )}
 
@@ -126,7 +134,7 @@ export function LibraryItemDialog({
           display={buildCatalogDisplayFromPrefill(addItemType, addPrefill)}
           totalEpisodes={addPrefill.totalEpisodes}
           totalChapters={addPrefill.totalChapters}
-          initial={{ status: "planned" }}
+          initial={initialTrackingForAdd ?? { status: "planned" }}
           onSubmit={(personal: PersonalTrackingValues) => {
             onSubmitMedia(buildCatalogMediaInput(addItemType, addPrefill, personal));
           }}

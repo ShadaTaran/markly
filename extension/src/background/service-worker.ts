@@ -25,6 +25,14 @@ function dedupeKey(adapterId: string, sourceKey: string): string {
   return `${adapterId}::${sourceKey}`;
 }
 
+/** Shared by the load-triggered gate below and the popup's "just granted permission, track this tab right now" request — never duplicated. */
+async function injectContentScript(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }).catch(() => {
+    // Tab may have navigated away already, or isn't script-injectable
+    // (e.g. a chrome:// page) — nothing to recover from here.
+  });
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url) return;
 
@@ -35,20 +43,20 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  // Injection is gated on scope (host_permissions), not on a specific
-  // adapter matching — the content script itself picks an adapter if one
-  // claims the URL, and falls back to universal detection otherwise (see
+  // Injection is gated on scope (host_permissions — required for the
+  // Markly dev origin, user-granted per origin for everything else via
+  // chrome.permissions; see lib/config.ts), not on a specific adapter
+  // matching — the content script itself picks an adapter if one claims
+  // the URL, and falls back to universal detection otherwise (see
   // content/content-script.ts). This is what lets universal detection
-  // run on pages with no dedicated adapter without requesting any
-  // broader permission.
-  if (!isWithinTrackedScope(url)) {
-    tabState.delete(tabId);
-    return;
-  }
-
-  chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }).catch(() => {
-    // Tab may have navigated away already, or isn't script-injectable
-    // (e.g. a chrome:// page) — nothing to recover from here.
+  // run on any enabled site without a dedicated adapter or any
+  // permission broader than that one origin.
+  isWithinTrackedScope(url).then((withinScope) => {
+    if (!withinScope) {
+      tabState.delete(tabId);
+      return;
+    }
+    void injectContentScript(tabId);
   });
 });
 
@@ -79,12 +87,25 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       handleGetPopupState().then(sendResponse);
       return true;
     }
+    case "INJECT_NOW": {
+      injectContentScript(message.tabId).then(() => sendResponse({ ok: true }));
+      return true;
+    }
     default:
       return false;
   }
 });
 
-async function handleDetection(detection: TrackingDetection, tabId: number | undefined): Promise<ProgressApiResult> {
+async function handleDetection(detection: TrackingDetection | null, tabId: number | undefined): Promise<ProgressApiResult> {
+  if (!detection) {
+    // The content script ran (the page was in scope) but nothing was
+    // confidently detected — purely local state for the popup; never
+    // reaches the Markly API.
+    const result: ProgressApiResult = { status: "low_confidence" };
+    if (tabId !== undefined) tabState.set(tabId, { detection: null, result });
+    return result;
+  }
+
   const key = dedupeKey(detection.adapterId, detection.sourceKey);
 
   if (lastSentValue.get(key) === detection.progress.value) {

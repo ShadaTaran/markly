@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Markly Auto Tracking",
-  "version": "0.1.0",
-  "description": "Automatically tracks your reading/watching progress into Markly on supported pages. Stage 18 foundation build — currently supports only Markly's own controlled test reader.",
+  "version": "0.2.0",
+  "description": "Automatically tracks your reading/watching progress into Markly on supported pages. Stage 19: real-site tracking, enabled per-site by explicit user action.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Markly"
@@ -11,6 +11,8 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "scripting"],
-  "host_permissions": ["http://localhost:3000/*"]
+  "options_page": "options.html",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["http://localhost:3000/*"],
+  "optional_host_permissions": ["*://*/*"]
 }

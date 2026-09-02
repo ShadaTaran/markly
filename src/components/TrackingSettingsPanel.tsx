@@ -3,12 +3,22 @@
 import { useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { fetchLibraryItems } from "@/lib/cloud/library-items";
+import { fetchLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
+import { insertActivityEvent } from "@/lib/cloud/activity";
 import { isMediaItem } from "@/lib/item-detail";
+import { createMediaItem, getUniqueCategories, normalizeCategory } from "@/lib/library-items";
+import { generateId } from "@/lib/utils";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
-import type { MediaItem } from "@/types/library-item";
+import type { MediaItem, MediaItemInput } from "@/types/library-item";
 import type { DeviceSummary } from "@/lib/extension/devices";
 import type { TrackingSourceSummary } from "@/lib/extension/types";
+import { buildDetectedMediaInput, buildDetectedTrackingValues } from "@/lib/extension/detected-item";
+import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
+import type { DetectedFallback } from "@/components/MetadataSearchPanel";
+import { Dialog } from "@/components/Dialog";
+import { MediaItemForm } from "@/components/MediaItemForm";
+import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
+import type { MetadataDetails } from "@/lib/metadata/types";
 
 interface TrackingSettingsPanelProps {
   initialDevices: DeviceSummary[];
@@ -25,6 +35,15 @@ function formatRelative(iso: string | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function hostnameFromSourceUrl(sourceUrl: string | null): string {
+  if (!sourceUrl) return "the detected page";
+  try {
+    return new URL(sourceUrl).hostname;
+  } catch {
+    return "the detected page";
+  }
 }
 
 function progressLabel(progress: TrackingSourceSummary["lastDetectedProgress"]): string {
@@ -48,6 +67,9 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const [linkingSourceId, setLinkingSourceId] = useState<string | null>(null);
   const [libraryItems, setLibraryItems] = useState<MediaItem[] | null>(null);
   const [itemFilter, setItemFilter] = useState("");
+  const [addLinkSource, setAddLinkSource] = useState<TrackingSourceSummary | null>(null);
+  const [addDialogState, setAddDialogState] = useState<DialogState>(null);
+  const [editDetailsOpen, setEditDetailsOpen] = useState(false);
 
   async function generateCode() {
     setBusy("pairing-code");
@@ -125,6 +147,138 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
     }
   }
 
+  /**
+   * Creates a new LibraryItem and links the given source to it — the one
+   * shared path behind all three ways "Add or Link" can end in a brand-new
+   * item (a selected catalog result, the one-click detected-work
+   * fallback, or a reviewed/edited version of it). The create is awaited
+   * (unlike the optimistic-local-then-fire-and-forget pattern
+   * `useLibraryItems` uses elsewhere) specifically so the row genuinely
+   * exists in the database before the link request runs — the
+   * `tracking_sources` RLS policy re-verifies the target item belongs to
+   * this user at link time, and linking against a not-yet-persisted item
+   * would be a real (if narrow) race, not just a cosmetic one. Only one
+   * `item_added` Activity event is recorded — the initial progress this
+   * item is created with is not itself a "transition" (there's no prior
+   * value to diff against), so no progress_updated event is generated for
+   * it, matching how a plain "Add Item" never logs one either.
+   */
+  async function createAndLinkItem(source: TrackingSourceSummary, itemType: MediaItem["type"], values: MediaItemInput) {
+    if (!user) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    setBusy(`add-link-${source.id}`);
+    setError(undefined);
+    try {
+      const normalized = { ...values, category: normalizeCategory(values.category, getUniqueCategories(libraryItems ?? [])) };
+      const newItem = createMediaItem(itemType, generateId(), new Date().toISOString(), normalized);
+
+      await upsertLibraryItem(supabase, newItem, user.id);
+      insertActivityEvent(
+        supabase,
+        { id: generateId(), type: "item_added", itemId: newItem.id, timestamp: new Date().toISOString() },
+        user.id,
+      ).catch(() => undefined);
+      setLibraryItems((current) => (current ? [newItem, ...current] : current));
+
+      setBusy(null);
+      await linkItem(source.id, newItem.id); // has its own busy/error handling
+    } catch {
+      setError("Couldn't add that item. Try again.");
+      setBusy(null);
+    }
+  }
+
+  /**
+   * "Add or Link" search-and-create — reuses the same catalog search and
+   * Add Item form the main library uses (LibraryItemDialog), pre-seeded
+   * with this source's detected title and media type, so a source with no
+   * existing library match can be added and linked in one flow instead of
+   * requiring a trip to the library page first. Selecting an existing
+   * library item stays exactly as before (the inline picker above), left
+   * untouched.
+   */
+  function openAddLinkDialog(source: TrackingSourceSummary) {
+    setAddLinkSource(source);
+    setAddDialogState({ step: "search", mode: "add", itemType: source.mediaType, initialQuery: source.sourceTitle });
+  }
+
+  function handleAddDialogSelectSearchResult(details: MetadataDetails) {
+    if (addDialogState?.step !== "search") return;
+    setAddDialogState({ step: "form", mode: "add", itemType: addDialogState.itemType, prefill: details });
+  }
+
+  function handleAddDialogManualEntry() {
+    if (addDialogState?.step !== "search") return;
+    setAddDialogState({ step: "form", mode: "add", itemType: addDialogState.itemType });
+  }
+
+  function handleAddDialogBackToSearch() {
+    if (addDialogState?.step !== "form" || addDialogState.mode !== "add" || addDialogState.itemType === "website") return;
+    setAddDialogState({ step: "search", mode: "add", itemType: addDialogState.itemType, initialQuery: addLinkSource?.sourceTitle });
+  }
+
+  function handleAddDialogBackToPicker() {
+    // This flow never has a type-picker step (the type is always the
+    // detected source's mediaType) — "back" from the search step closes
+    // the dialog outright instead.
+    handleCloseAddDialog();
+  }
+
+  function handleAddDialogToggleFullForm() {
+    if (addDialogState?.step !== "form") return;
+    setAddDialogState({ ...addDialogState, showFullForm: true });
+  }
+
+  function handleCloseAddDialog() {
+    setAddDialogState(null);
+    setAddLinkSource(null);
+  }
+
+  async function handleAddDialogSubmitMedia(values: MediaItemInput) {
+    if (addDialogState?.step !== "form" || addDialogState.itemType === "website" || !addLinkSource) return;
+    const source = addLinkSource;
+    const itemType = addDialogState.itemType;
+    setAddDialogState(null);
+    setAddLinkSource(null);
+    await createAndLinkItem(source, itemType, values);
+  }
+
+  /**
+   * The one-click path from the "No catalog results — add detected work"
+   * offer (see MetadataSearchPanel's detectedFallback). No form, no
+   * retyping — title/progress/media type all come straight from what the
+   * extension already detected (lib/extension/detected-item.ts).
+   */
+  async function handleAddDetectedWork() {
+    if (!addLinkSource || busy !== null) return;
+    const source = addLinkSource;
+    setAddDialogState(null);
+    setAddLinkSource(null);
+    await createAndLinkItem(source, source.mediaType, buildDetectedMediaInput(source));
+  }
+
+  /** "Edit Details" from the same offer — same detected data, but reviewable/editable before saving, via the full MediaItemForm. */
+  function openEditDetails() {
+    if (!addLinkSource) return;
+    setAddDialogState(null);
+    setEditDetailsOpen(true);
+  }
+
+  function handleCloseEditDetails() {
+    setEditDetailsOpen(false);
+    setAddLinkSource(null);
+  }
+
+  async function handleEditDetailsSubmit(values: MediaItemInput) {
+    if (!addLinkSource) return;
+    const source = addLinkSource;
+    setEditDetailsOpen(false);
+    setAddLinkSource(null);
+    await createAndLinkItem(source, source.mediaType, values);
+  }
+
   async function unlinkSource(sourceId: string) {
     setBusy(`unlink-${sourceId}`);
     setError(undefined);
@@ -145,6 +299,32 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
       setBusy(null);
     }
   }
+
+  // Offered on the catalog-search step whenever it comes up empty/errors
+  // — external metadata is optional, not required, for tracking to work
+  // (see README "Add or Link"). Derived from addLinkSource (not per-row)
+  // since the dialog it feeds is itself a single shared instance driven
+  // by whichever source is currently active.
+  const detectedFallback: DetectedFallback | undefined = addLinkSource
+    ? {
+        title: addLinkSource.sourceTitle,
+        sourceLabel: hostnameFromSourceUrl(addLinkSource.sourceUrl),
+        progressLabel: addLinkSource.lastDetectedProgress ? progressLabel(addLinkSource.lastDetectedProgress) : undefined,
+        onAddAndTrack: handleAddDetectedWork,
+        onEditDetails: openEditDetails,
+        busy: busy === `add-link-${addLinkSource.id}`,
+      }
+    : undefined;
+
+  // Seeds the catalog-hit compact review form with the detected progress
+  // instead of leaving it blank — CatalogTrackingForm's own add-mode
+  // status inference (planned vs. in_progress) already keys off whether
+  // progress is actually filled in, so prefilling this is what makes Test
+  // A's "progress = 40, status in_progress" happen automatically; nothing
+  // else needs to force the status.
+  const initialTrackingForAdd: PersonalTrackingValues | undefined = addLinkSource
+    ? { status: "in_progress", ...buildDetectedTrackingValues(addLinkSource.mediaType, addLinkSource.lastDetectedProgress) }
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -286,13 +466,22 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                           ))}
                         </ul>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setLinkingSourceId(null)}
-                        className="text-xs font-medium text-muted-foreground hover:text-foreground"
-                      >
-                        Cancel
-                      </button>
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => openAddLinkDialog(source)}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          Not in the list? Search the catalog to add it
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLinkingSourceId(null)}
+                          className="shrink-0 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="mt-2 flex items-center justify-between gap-3">
@@ -302,7 +491,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                         onClick={() => openLinkPicker(source.id)}
                         className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
                       >
-                        Link Item
+                        Add or Link
                       </button>
                     </div>
                   )}
@@ -312,6 +501,45 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
           </ul>
         )}
       </section>
+
+      <LibraryItemDialog
+        state={addDialogState}
+        existingCategories={getUniqueCategories(libraryItems ?? [])}
+        onSelectType={() => undefined}
+        onSelectSearchResult={handleAddDialogSelectSearchResult}
+        onManualEntry={handleAddDialogManualEntry}
+        onBackToPicker={handleAddDialogBackToPicker}
+        onBackToSearch={handleAddDialogBackToSearch}
+        onToggleFullForm={handleAddDialogToggleFullForm}
+        onClose={handleCloseAddDialog}
+        onSubmitWebsite={() => undefined}
+        onSubmitMedia={handleAddDialogSubmitMedia}
+        detectedFallback={detectedFallback}
+        initialTrackingForAdd={initialTrackingForAdd}
+      />
+
+      <Dialog
+        isOpen={editDetailsOpen && addLinkSource !== null}
+        onClose={handleCloseEditDetails}
+        title={`Add ${addLinkSource ? ITEM_TYPE_LABELS[addLinkSource.mediaType] : "Item"}`}
+      >
+        {addLinkSource && (
+          <MediaItemForm
+            key={addLinkSource.id}
+            type={addLinkSource.mediaType}
+            detected={{
+              title: addLinkSource.sourceTitle,
+              sourceUrl: addLinkSource.sourceUrl ?? undefined,
+              readingFormat: addLinkSource.mediaType === "novel" ? "web_novel" : undefined,
+              status: "in_progress",
+              ...buildDetectedTrackingValues(addLinkSource.mediaType, addLinkSource.lastDetectedProgress),
+            }}
+            existingCategories={getUniqueCategories(libraryItems ?? [])}
+            onSubmit={handleEditDetailsSubmit}
+            onCancel={handleCloseEditDetails}
+          />
+        )}
+      </Dialog>
     </div>
   );
 }

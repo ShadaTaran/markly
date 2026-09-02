@@ -93,12 +93,31 @@ export interface MangaItem extends TrackableLibraryItem {
 
 export type NovelProgressUnit = "chapter" | "page" | "percent";
 
+/**
+ * A written work's publication format — distinct from `type: "novel"`
+ * itself, which stays the one tracking media type for every kind of
+ * written prose (see README "Metadata Search"). Deliberately a narrow set
+ * mapped to the sources Markly actually has evidence for, not every term
+ * in common use (no separate "web_serial"/"fanfiction" — nothing
+ * currently distinguishes those from "web_novel", so a value with no real
+ * signal behind it would just be a second name for the same bucket):
+ *   - "book": a traditionally-published book (Open Library's domain).
+ *   - "light_novel": an officially-published light novel (AniList's
+ *     `format: NOVEL`/`ONE_SHOT` catalog).
+ *   - "web_novel": a raw/fan-translated web novel or serial with no
+ *     official catalog entry — always a *suggestion* when set from a
+ *     browser-extension detection (never asserted as fact), always
+ *     user-editable.
+ */
+export type NovelReadingFormat = "book" | "light_novel" | "web_novel";
+
 export interface NovelItem extends TrackableLibraryItem {
   type: "novel";
   progressValue?: number;
   progressUnit?: NovelProgressUnit;
   authors?: string[];
   pageCount?: number;
+  readingFormat?: NovelReadingFormat;
 }
 
 export interface MovieItem extends TrackableLibraryItem {
@@ -156,11 +175,18 @@ export const ITEM_TYPE_LABELS: Record<LibraryItemType, string> = {
   website: "Website",
   anime: "Anime",
   manga: "Manga",
-  novel: "Novel / Book",
+  novel: "Books & Novels",
   game: "Game",
   movie: "Movie",
   series: "Series",
   article: "Article",
   video: "Video",
   other: "Other",
+};
+
+/** Display label for a novel's optional reading format — see NovelReadingFormat. Never shown for a novel that doesn't have one set (e.g. most manually-added or pre-Stage-20 items). */
+export const NOVEL_READING_FORMAT_LABELS: Record<NovelReadingFormat, string> = {
+  book: "Book",
+  light_novel: "Light Novel",
+  web_novel: "Web Novel",
 };

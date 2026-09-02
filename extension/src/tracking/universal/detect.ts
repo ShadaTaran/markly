@@ -22,19 +22,65 @@ function mediaTypeForKind(kind: "chapter" | "episode"): TrackingMediaType {
   return kind === "chapter" ? "novel" : "anime";
 }
 
-/** Strips a leading/trailing "Chapter 234 -"/"- Chapter 234" style fragment, leaving just the work title. */
-function stripProgressFragment(text: string): string {
-  return text
-    .replace(/[-|:–—]\s*(ch(?:apter)?|ep(?:isode)?)\.?\s*\d+\s*$/i, "")
-    .replace(/^(ch(?:apter)?|ep(?:isode)?)\.?\s*\d+\s*[-|:–—]\s*/i, "")
-    .trim();
+const TITLE_SEGMENT_SEPARATOR = /\s+[-|:–—]\s+/;
+const INLINE_PROGRESS_PATTERN = /\bch(?:apter)?\.?\s*\d+\b|\bep(?:isode)?\.?\s*\d+\b/i;
+
+function findInlineProgressMatch(segment: string): RegExpMatchArray | null {
+  return segment.match(INLINE_PROGRESS_PATTERN);
+}
+
+/**
+ * Isolates the work title out of a page label that also carries the
+ * chapter/episode marker and often a site name and/or a chapter-specific
+ * name too — real sites rarely label a page with just the work title.
+ * Observed on real reader sites (see extension/README.md "Real-world
+ * title shapes"), e.g.:
+ *   "Lord of the Mysteries - Chapter 1 - Crimson - Novel Phoenix"
+ *     -> "Lord of the Mysteries"
+ *   "Chapter 234 | Lord of Mysteries"
+ *     -> "Lord of Mysteries"
+ *   "Lord of Mysteries Ch. 234"
+ *     -> "Lord of Mysteries"
+ *
+ * Splits on common label separators (" - ", " | ", " : ", en/em dash) and
+ * finds the first segment that actually contains a chapter/episode
+ * marker: everything before that marker (within its segment, plus any
+ * earlier segments) is the work title; if the marker leads with nothing
+ * before it, the title is instead whatever segment comes right after.
+ * Segments after the marker (a chapter's own name, the site's name) are
+ * simply dropped. A segment or trailing number that does NOT itself match
+ * a chapter/episode pattern is never touched, so "Lord of Mysteries 2" is
+ * never confused with a progress marker.
+ */
+function extractWorkTitleFromLabel(text: string): string {
+  const segments = text.split(TITLE_SEGMENT_SEPARATOR);
+
+  for (let i = 0; i < segments.length; i++) {
+    const match = findInlineProgressMatch(segments[i]);
+    if (!match || match.index === undefined) continue;
+
+    const before = segments[i].slice(0, match.index).trim();
+    if (before.length > 0) {
+      return [...segments.slice(0, i), before].join(" - ").trim();
+    }
+    if (i === 0) {
+      // The marker leads with nothing before it, and it's the very first
+      // segment — e.g. "Chapter 235 - Lord of Mysteries - Site". The real
+      // title is whatever comes right after it.
+      return (segments[i + 1] ?? "").trim();
+    }
+    // The marker is its own segment with real title text earlier.
+    return segments.slice(0, i).join(" - ").trim();
+  }
+
+  return text.trim();
 }
 
 function deriveWorkTitle(document: Document, metadata: ReturnType<typeof extractMetadata>): string | null {
   const candidate = metadata.ogTitle ?? metadata.jsonLdName ?? document.querySelector("h1")?.textContent ?? document.title;
   if (!candidate) return null;
-  const stripped = stripProgressFragment(candidate);
-  return stripped.length > 0 ? stripped : null;
+  const extracted = extractWorkTitleFromLabel(candidate);
+  return extracted.length > 0 ? extracted : null;
 }
 
 function slugify(text: string): string {

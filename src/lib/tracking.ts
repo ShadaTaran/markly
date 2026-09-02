@@ -1,4 +1,4 @@
-import type { LibraryItem, MediaItem, NovelProgressUnit, TrackingStatus } from "@/types/library-item";
+import type { LibraryItem, MediaItem, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
 import { ALL_FILTER } from "@/lib/constants";
 import type { CategoryOption } from "@/lib/library-items";
 
@@ -220,4 +220,8 @@ export function normalizePercent(value: unknown): number | undefined {
 
 export function normalizeProgressUnit(value: unknown): NovelProgressUnit | undefined {
   return value === "chapter" || value === "page" || value === "percent" ? value : undefined;
+}
+
+export function normalizeReadingFormat(value: unknown): NovelReadingFormat | undefined {
+  return value === "book" || value === "light_novel" || value === "web_novel" ? value : undefined;
 }

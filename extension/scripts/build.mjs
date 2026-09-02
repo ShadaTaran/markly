@@ -14,6 +14,8 @@ function copyStatic() {
   fs.copyFileSync(path.join(root, "manifest.json"), path.join(outdir, "manifest.json"));
   fs.copyFileSync(path.join(root, "src/popup/popup.html"), path.join(outdir, "popup.html"));
   fs.copyFileSync(path.join(root, "src/popup/popup.css"), path.join(outdir, "popup.css"));
+  fs.copyFileSync(path.join(root, "src/options/options.html"), path.join(outdir, "options.html"));
+  fs.copyFileSync(path.join(root, "src/options/options.css"), path.join(outdir, "options.css"));
 }
 
 const common = {
@@ -28,6 +30,7 @@ const targets = [
   { entryPoints: [path.join(root, "src/background/service-worker.ts")], outfile: path.join(outdir, "background.js"), format: "esm" },
   { entryPoints: [path.join(root, "src/content/content-script.ts")], outfile: path.join(outdir, "content.js"), format: "iife" },
   { entryPoints: [path.join(root, "src/popup/popup.ts")], outfile: path.join(outdir, "popup.js"), format: "iife" },
+  { entryPoints: [path.join(root, "src/options/options.ts")], outfile: path.join(outdir, "options.js"), format: "iife" },
 ];
 
 async function run() {

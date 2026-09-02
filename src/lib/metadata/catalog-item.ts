@@ -1,4 +1,4 @@
-import type { MediaItem, MediaItemInput } from "@/types/library-item";
+import type { MediaItem, MediaItemInput, NovelReadingFormat } from "@/types/library-item";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { buildCatalogDisplay, type CatalogDisplay } from "@/lib/metadata/display";
 import { deriveCategoryAndTags } from "@/lib/metadata/derive";
@@ -7,6 +7,21 @@ import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 /** True for any saved media item that was created from a catalog search selection. */
 export function hasCatalogSource(item: MediaItem): boolean {
   return item.catalogSource !== undefined;
+}
+
+/**
+ * Conservative, source-specific — never a blanket "novel = web novel"
+ * assumption. AniList's light-novel provider (format NOVEL/ONE_SHOT) only
+ * ever returns officially-published light novels, so that inference is
+ * well-founded; Open Library indexes traditionally-published books, never
+ * raw web novels, so it maps to "book," not "web_novel" (see
+ * README "Metadata Search" for why that distinction matters). TMDB/RAWG
+ * results never reach this function (novel-only).
+ */
+export function inferReadingFormatFromCatalog(provider: MetadataDetails["provider"]): NovelReadingFormat | undefined {
+  if (provider === "anilist") return "light_novel";
+  if (provider === "open-library") return "book";
+  return undefined;
 }
 
 export function buildCatalogDisplayFromPrefill(type: MediaItem["type"], prefill: MetadataDetails): CatalogDisplay {
@@ -111,6 +126,7 @@ export function buildCatalogMediaInput(
         progressUnit: personal.progressUnit,
         authors: catalogData.authors,
         pageCount: catalogData.pageCount,
+        readingFormat: inferReadingFormatFromCatalog(catalogData.provider),
       };
     case "movie":
       return { ...common, genres: catalogData.genres };

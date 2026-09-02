@@ -6,19 +6,89 @@ progress when you navigate a supported reading page. See the main repo's
 for the full product explanation, pairing flow, and privacy model — this
 file covers building and developing the extension itself.
 
-**Stage 18 status:** detection has two paths. A **universal detection
-engine** (`src/tracking/universal/`) tries first on every page in scope,
-using generic signals (URL pattern, headings, title, metadata, navigation)
-— no site-specific adapter required. The one adapter that exists,
+**Status:** detection has two paths. A **universal detection engine**
+(`src/tracking/universal/`) tries first on every page in scope, using
+generic signals (URL pattern, headings, title, metadata, navigation) — no
+site-specific adapter required. The one adapter that exists,
 `markly-test-reader`, matches only Markly's own controlled test page at
 `/dev/reader-test` and exists to prove the detection → link → auto-update
 pipeline through an adapter specifically, not to be a real feature. A
 second controlled page, `/dev/reader-test-generic`, has no adapter and no
 Markly-specific markup at all — it exists to prove the universal engine
-doesn't secretly depend on either. Stage 19 adds the first real
-external-site adapter, for a site where the universal engine turns out to
-be unreliable — see "Adding a new site adapter" below for when that's
-actually warranted.
+doesn't secretly depend on either.
+
+**Stage 19 real-site result: NovelPhoenix works through `universal-reader`
+alone — no adapter was created.** Tested live against 3 chapter URLs
+across 2 novels (`novelphoenix.com/novel/lord-of-the-mysteries/chapter-1`,
+`.../chapter-2`, `novelphoenix.com/novel/reverend-insanity/chapter-100`):
+every page produced a correct `TrackingDetection` (right title, right
+chapter, a source key stable across chapters) straight from the generic
+engine. Two genuine, generic bugs turned up along the way and were fixed
+in the universal engine itself (never NovelPhoenix-specific code — see
+"Real-world title shapes" below): title extraction couldn't isolate a work
+title from a label with extra trailing segments, and JSON-LD name lookup
+could pick up a site-wide `Organization` block instead of skipping it.
+Neither fix touches adapter code at all. See the Stage 19 report for the
+full signal-by-signal breakdown.
+
+## Real-world title shapes
+
+A synthetic test page tends to label itself just `"Work Title - Chapter N"`.
+Real sites rarely do — NovelPhoenix's `document.title`/`og:title` is
+`"Lord of the Mysteries - Chapter 1 - Crimson - Novel Phoenix"`: the work
+title, then the chapter marker, then the chapter's own name ("Crimson"),
+then the site's name, all separator-joined. `extractWorkTitleFromLabel` in
+`src/tracking/universal/detect.ts` isolates just the work title by finding
+which separator-delimited segment contains the chapter/episode marker and
+keeping only what comes before it (or, if the marker leads with nothing
+before it, whatever segment comes right after) — discarding every segment
+after the marker unconditionally. This handles "title - marker - extra -
+extra", "marker | title", and "title marker" (no separator at all) with
+the same logic; a trailing plain number that isn't itself a chapter/episode
+marker (`"Lord of Mysteries 2"`) is never touched. See
+`scripts/verify-title-extraction.mjs` at the repo root for the exact cases
+covered, including the real strings captured from NovelPhoenix.
+
+## Runtime site permissions
+
+The extension never requests `<all_urls>` and never pre-declares a real
+site's origin in `host_permissions`. `manifest.json` declares a wildcard
+scheme-and-host pattern under `optional_host_permissions` — this is what
+lets `chrome.permissions.request()` ask for one *specific* origin at
+runtime; Chrome still prompts the user for exactly that origin, nothing
+broader, and only when the request happens inside a genuine user gesture.
+
+- `src/lib/site-permissions.ts` wraps `chrome.permissions.contains` /
+  `.request` / `.remove` / `.getAll` — the only source of truth for "is
+  this origin enabled," never a stored preference that merely claims to
+  reflect it.
+- `src/lib/config.ts`'s `isWithinTrackedScope()` is now async: the Markly
+  dev origin is always in scope (required `host_permissions`), every other
+  origin only if `chrome.permissions.contains` says so.
+- The popup (`src/popup/popup.ts`) checks the active tab's origin (via the
+  `activeTab` permission, which needs no install-time prompt) and shows
+  "Tracking isn't enabled for this site" + an **Enable Tracking** button
+  when it isn't. The button's click handler calls
+  `chrome.permissions.request()` directly — synchronously within the
+  gesture — then asks the service worker to inject the content script into
+  the *current* tab immediately (`INJECT_NOW`), since the page already
+  finished loading before the grant existed and `chrome.tabs.onUpdated`
+  won't fire again on its own.
+- `src/options/` is a minimal options page (`chrome.runtime.openOptionsPage()`,
+  linked from the popup's "Manage Sites" button) listing every granted
+  origin with a **Disable** button that calls `chrome.permissions.remove`.
+  Not a general permissions dashboard — just enough to see and revoke what
+  auto-tracking can reach.
+
+**Site permission and source mapping are different concepts, kept
+separate everywhere:** site permission ("may Markly inspect this site's
+pages at all") lives entirely in Chrome's own permission store, checked
+via `chrome.permissions`; source mapping ("which LibraryItem does this
+specific detected work correspond to") lives in the `tracking_sources`
+table server-side. Revoking a site's permission stops detection outright
+(the content script is never injected there again); it has no effect on
+any existing `tracking_sources` row, which stays linked and simply stops
+receiving new detections until the site is re-enabled.
 
 ## Build
 
@@ -79,28 +149,45 @@ src/
                     README's "Universal detection signals" table)
     detect.ts      Orchestrates the above into one TrackingDetection or null;
                     exports the fixed detector id UNIVERSAL_DETECTOR_ID =
-                    "universal-reader"
+                    "universal-reader"; extractWorkTitleFromLabel handles
+                    real-world page-label shapes (see "Real-world title
+                    shapes" above)
+    diagnostics.ts Dev-only: recomputes the same signals to explain a
+                    decision (console.debug only — never sent anywhere,
+                    never shown in the ordinary popup UX)
   background/
     service-worker.ts   Owns the device token, calls the Markly API, injects
                           the content script on any tab within tracked scope
                           (isWithinTrackedScope — not tied to a specific
                           adapter matching), tracks per-tab detection state
-                          for the popup
+                          for the popup, handles INJECT_NOW (immediate
+                          injection right after a fresh permission grant)
   content/
     content-script.ts   Injected on any in-scope tab. Checks the adapter
                           registry first; if one matches the URL, uses that
                           adapter's result exclusively (even if null) —
-                          otherwise falls back to universal detection. Reads
-                          the page, forwards at most one message, and does
-                          nothing else.
+                          otherwise falls back to universal detection.
+                          Always reports its result (even null, so the
+                          popup can distinguish "nothing confidently
+                          detected" from "never ran"). Reads the page,
+                          forwards at most one message, and does nothing
+                          else.
   popup/
-    popup.html/css/ts   Plain DOM, no framework — pairing form or
-                          current-page status depending on connection state
+    popup.html/css/ts   Plain DOM, no framework — pairing form, per-site
+                          "Enable Tracking" prompt, or current-page status
+                          depending on connection/permission state
+  options/
+    options.html/css/ts Plain DOM options page — lists granted site
+                          permissions with a Disable button each
   lib/
     config.ts    MARKLY_BASE_URL (hardcoded to localhost for Stage 18) and
                   isWithinTrackedScope() — the injection gate, kept
                   deliberately separate from adapter-vs-universal selection
                   so universal coverage never requires broader permissions
+                  than one origin at a time
+    site-permissions.ts  chrome.permissions wrapper (see "Runtime site
+                  permissions" above) — the only source of truth for
+                  which third-party origins are enabled
     storage.ts   chrome.storage.local wrapper for the device token
     api.ts       The only module that calls Markly's API — imported by the
                   service worker only
@@ -158,4 +245,15 @@ picks it up automatically once it's registered.
   `data-source-title` or a crafted `og:title`).
 - Every detection — from either path — is validated again server-side in
   `POST /api/extension/progress` — the extension is never trusted to have
-  sent well-formed or honest data.
+  sent well-formed or honest data. A null detection (nothing confidently
+  found) never reaches this endpoint at all — it's reported to the service
+  worker purely as local popup state (see content-script.ts above).
+- Diagnostics (`tracking/universal/diagnostics.ts`) read exactly the same
+  narrow signal set `detectUniversal` already reads — never more — and are
+  only ever written to `console.debug` in the page's own DevTools console.
+  They are never included in the message sent to the service worker, never
+  forwarded to Markly, and never rendered in the popup.
+- Site permission grants are Chrome's own, checked live via
+  `chrome.permissions` — nothing about which sites are enabled is ever
+  cached in a way that could go stale relative to what Chrome actually
+  granted (see "Runtime site permissions" above).

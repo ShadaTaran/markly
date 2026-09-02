@@ -10,13 +10,26 @@ export interface PageMetadata {
   jsonLdName: string | null;
 }
 
+// schema.org types that describe the SITE, not the work being read — a
+// page can legitimately carry one of these alongside (or instead of) a
+// work-describing block (e.g. an Organization block naming the site
+// itself), and its `name` must never be mistaken for a work title.
+// Observed on a real site (NovelPhoenix carries an Organization block
+// naming itself "Novel Phoenix" on every page) — see extension/README.md.
+const NON_WORK_JSON_LD_TYPES = new Set(["Organization", "WebSite", "BreadcrumbList", "WebPage", "SiteNavigationElement"]);
+
 function readJsonLdName(document: Document): string | null {
   const scripts = document.querySelectorAll('script[type="application/ld+json"]');
   for (const script of Array.from(scripts)) {
     try {
       const parsed: unknown = JSON.parse(script.textContent ?? "");
       const candidate = Array.isArray(parsed) ? parsed[0] : parsed;
-      if (candidate && typeof candidate === "object" && "name" in candidate) {
+      if (!candidate || typeof candidate !== "object") continue;
+
+      const type = (candidate as { "@type"?: unknown })["@type"];
+      if (typeof type === "string" && NON_WORK_JSON_LD_TYPES.has(type)) continue;
+
+      if ("name" in candidate) {
         const name = (candidate as { name: unknown }).name;
         if (typeof name === "string" && name.trim().length > 0) return name.trim();
       }

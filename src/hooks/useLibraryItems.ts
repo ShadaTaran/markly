@@ -295,12 +295,13 @@ export function useLibraryItems(
     persistUpsert(updated);
   }
 
-  function addMedia(type: MediaItem["type"], values: MediaItemInput) {
+  function addMedia(type: MediaItem["type"], values: MediaItemInput): MediaItem {
     const normalized = { ...values, category: normalizeCategory(values.category, getUniqueCategories(items)) };
     const newItem = createMediaItem(type, generateId(), new Date().toISOString(), normalized);
     setItems((current) => [newItem, ...current]);
     onActivity?.({ type: "item_added", itemId: newItem.id });
     persistUpsert(newItem);
+    return newItem;
   }
 
   function updateMedia(existing: MediaItem, values: MediaItemInput) {

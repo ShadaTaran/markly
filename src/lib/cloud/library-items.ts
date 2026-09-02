@@ -8,6 +8,7 @@ import {
   normalizePositiveInt,
   normalizeProgressUnit,
   normalizeRating,
+  normalizeReadingFormat,
   normalizeStatus,
 } from "@/lib/tracking";
 
@@ -106,6 +107,7 @@ export function fromLibraryItemRow(row: LibraryItemRow): LibraryItem {
         progressUnit: normalizeProgressUnit(readString(meta, "progressUnit")),
         authors: readStringArray(meta, "authors"),
         pageCount: readNumber(meta, "pageCount"),
+        readingFormat: normalizeReadingFormat(readString(meta, "readingFormat")),
       };
     case "movie":
       return { ...mediaBase, type: "movie", genres: readStringArray(meta, "genres") };
@@ -179,6 +181,7 @@ export function toLibraryItemRow(item: LibraryItem, userId: string): LibraryItem
       if (item.progressUnit !== undefined) metadata.progressUnit = item.progressUnit;
       if (item.authors !== undefined) metadata.authors = item.authors;
       if (item.pageCount !== undefined) metadata.pageCount = item.pageCount;
+      if (item.readingFormat !== undefined) metadata.readingFormat = item.readingFormat;
       break;
     case "movie":
       if (item.genres !== undefined) metadata.genres = item.genres;

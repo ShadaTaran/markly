@@ -1,20 +1,36 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import type { MediaItem, MediaItemInput, NovelProgressUnit, TrackingStatus } from "@/types/library-item";
-import { ITEM_TYPE_LABELS } from "@/types/library-item";
+import type { MediaItem, MediaItemInput, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
+import { ITEM_TYPE_LABELS, NOVEL_READING_FORMAT_LABELS } from "@/types/library-item";
 import { cn, parseCommaList, parseTags } from "@/lib/utils";
 import { isValidUrl, normalizeUrl } from "@/lib/website";
 import { TRACKING_STATUS_OPTIONS } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
+import { inferReadingFormatFromCatalog } from "@/lib/metadata/catalog-item";
+import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import { parseCount, parseDecimal, parsePercent, parseRating } from "@/lib/form-number-parsing";
 import { Field, inputClass } from "@/components/FormField";
+
+/**
+ * Prefill for a browser-extension-detected work with no catalog match —
+ * distinct from `prefill` (a real catalog result): there's no
+ * provider/externalId here, `catalogSource` is deliberately never set for
+ * an item created this way. See lib/extension/detected-item.ts.
+ */
+export interface DetectedPrefill extends Partial<PersonalTrackingValues> {
+  title: string;
+  sourceUrl?: string;
+  readingFormat?: NovelReadingFormat;
+}
 
 interface MediaItemFormProps {
   type: MediaItem["type"];
   initialValues?: MediaItem;
   /** Autofill data from a metadata search selection — add mode only, never used when editing. */
   prefill?: MetadataDetails;
+  /** Autofill from a browser-extension detection with no catalog match — add mode only, mutually exclusive with `prefill`. */
+  detected?: DetectedPrefill;
   existingCategories: string[];
   onSubmit: (values: MediaItemInput) => void;
   onCancel: () => void;
@@ -40,6 +56,7 @@ interface FormState {
   authors: string;
   studio: string;
   pageCount: string;
+  readingFormat: string;
 }
 
 type FormErrors = Partial<
@@ -60,20 +77,26 @@ type FormErrors = Partial<
   >
 >;
 
-function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: MetadataDetails): FormState {
+function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: MetadataDetails, detected?: DetectedPrefill): FormState {
   return {
-    title: item?.title ?? prefill?.title ?? "",
+    title: item?.title ?? prefill?.title ?? detected?.title ?? "",
     description: item?.description ?? prefill?.description ?? "",
     imageUrl: item?.imageUrl ?? prefill?.imageUrl ?? "",
-    sourceUrl: item?.sourceUrl ?? "",
+    sourceUrl: item?.sourceUrl ?? detected?.sourceUrl ?? "",
     category: item?.category ?? "",
     tags: item?.tags.join(", ") ?? "",
     platform: item && item.type === "game" ? (item.platform ?? "") : "",
-    status: item?.status ?? "planned",
+    // A detected work is an explicit "I'm reading/tracking this now"
+    // action, so it defaults to in_progress rather than planned — see
+    // buildDetectedMediaInput's initialStatusFor for the same rule
+    // applied to the one-click Add & Track path.
+    status: item?.status ?? detected?.status ?? "planned",
     currentEpisode:
       item && (item.type === "anime" || item.type === "series") && item.currentEpisode !== undefined
         ? String(item.currentEpisode)
-        : "",
+        : !item && (type === "anime" || type === "series") && detected?.currentEpisode !== undefined
+          ? String(detected.currentEpisode)
+          : "",
     totalEpisodes:
       item && (item.type === "anime" || item.type === "series") && item.totalEpisodes !== undefined
         ? String(item.totalEpisodes)
@@ -81,7 +104,11 @@ function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: Metada
           ? String(prefill.totalEpisodes)
           : "",
     currentChapter:
-      item && item.type === "manga" && item.currentChapter !== undefined ? String(item.currentChapter) : "",
+      item && item.type === "manga" && item.currentChapter !== undefined
+        ? String(item.currentChapter)
+        : !item && type === "manga" && detected?.currentChapter !== undefined
+          ? String(detected.currentChapter)
+          : "",
     totalChapters:
       item && item.type === "manga" && item.totalChapters !== undefined
         ? String(item.totalChapters)
@@ -89,11 +116,24 @@ function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: Metada
           ? String(prefill.totalChapters)
           : "",
     progressValue:
-      item && item.type === "novel" && item.progressValue !== undefined ? String(item.progressValue) : "",
-    progressUnit: item && item.type === "novel" ? item.progressUnit ?? "chapter" : "chapter",
+      item && item.type === "novel" && item.progressValue !== undefined
+        ? String(item.progressValue)
+        : !item && type === "novel" && detected?.progressValue !== undefined
+          ? String(detected.progressValue)
+          : "",
+    progressUnit:
+      item && item.type === "novel"
+        ? (item.progressUnit ?? "chapter")
+        : !item && type === "novel" && detected?.progressUnit
+          ? detected.progressUnit
+          : "chapter",
     rating: item?.rating !== undefined ? String(item.rating) : "",
     playtimeHours:
-      item && item.type === "game" && item.playtimeHours !== undefined ? String(item.playtimeHours) : "",
+      item && item.type === "game" && item.playtimeHours !== undefined
+        ? String(item.playtimeHours)
+        : !item && type === "game" && detected?.playtimeHours !== undefined
+          ? String(detected.playtimeHours)
+          : "",
     authors:
       item && (item.type === "novel" || item.type === "manga") && item.authors
         ? item.authors.join(", ")
@@ -111,6 +151,12 @@ function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: Metada
         ? String(item.pageCount)
         : !item && type === "novel" && prefill?.pageCount !== undefined
           ? String(prefill.pageCount)
+          : "",
+    readingFormat:
+      item && item.type === "novel"
+        ? (item.readingFormat ?? "")
+        : !item && type === "novel"
+          ? (prefill ? (inferReadingFormatFromCatalog(prefill.provider) ?? "") : (detected?.readingFormat ?? ""))
           : "",
   };
 }
@@ -135,11 +181,12 @@ export function MediaItemForm({
   type,
   initialValues,
   prefill,
+  detected,
   existingCategories,
   onSubmit,
   onCancel,
 }: MediaItemFormProps) {
-  const [values, setValues] = useState<FormState>(() => toFormState(type, initialValues, prefill));
+  const [values, setValues] = useState<FormState>(() => toFormState(type, initialValues, prefill, detected));
   const [errors, setErrors] = useState<FormErrors>({});
   // Catalog fields the form doesn't expose as inputs (genres, release year,
   // developer/publisher, catalog platforms, provenance) are carried through
@@ -274,6 +321,7 @@ export function MediaItemForm({
         progressUnit: progress.value !== undefined ? unit : undefined,
         authors: authors.length > 0 ? authors : undefined,
         pageCount: pageCount.value,
+        readingFormat: values.readingFormat ? (values.readingFormat as NovelReadingFormat) : undefined,
       });
       return;
     }
@@ -319,7 +367,7 @@ export function MediaItemForm({
           aria-invalid={Boolean(errors.title)}
           aria-describedby={errors.title ? "media-title-error" : undefined}
           className={inputClass(Boolean(errors.title))}
-          placeholder={`e.g. ${label === "Novel / Book" ? "The Hobbit" : label + " title"}`}
+          placeholder={`e.g. ${type === "novel" ? "The Hobbit" : label + " title"}`}
         />
       </Field>
 
@@ -397,6 +445,28 @@ export function MediaItemForm({
             className={inputClass(false)}
             placeholder={type === "novel" ? "e.g. Frank Herbert" : "e.g. Kentaro Miura"}
           />
+        </Field>
+      )}
+
+      {type === "novel" && (
+        <Field
+          label="Format"
+          htmlFor="media-reading-format"
+          hint={detected?.readingFormat ? "Optional. Suggested from the detected page — change it if it's not right." : "Optional."}
+        >
+          <select
+            id="media-reading-format"
+            value={values.readingFormat}
+            onChange={(event) => updateField("readingFormat", event.target.value)}
+            className={inputClass(false)}
+          >
+            <option value="">Not specified</option>
+            {(Object.entries(NOVEL_READING_FORMAT_LABELS) as [NovelReadingFormat, string][]).map(([value, formatLabel]) => (
+              <option key={value} value={value}>
+                {formatLabel}
+              </option>
+            ))}
+          </select>
         </Field>
       )}
 

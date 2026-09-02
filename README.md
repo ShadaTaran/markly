@@ -85,6 +85,33 @@ Both are safe for client-side code — the anon key relies on Row Level Security
 
 Metadata search also has its own optional, server-only API keys (`TMDB_API_KEY`, `RAWG_API_KEY`) — see the comments in `.env.example`.
 
+## Metadata Search
+
+Adding anime/manga/novel/movie/series/game items offers a catalog search step before the manual entry form (`src/components/MetadataSearchPanel.tsx`), backed by a per-type provider (`src/lib/metadata/registry.ts`): AniList for anime/manga, TMDB for movies/series, RAWG for games, and — for **Books & Novels** (`mediaType: "novel"` internally; the user-facing label changed from "Novel / Book" purely as copy, nothing persisted changed) — two catalogs queried in parallel and merged into one result list (`src/lib/metadata/providers/combined-novel.ts`):
+
+- **Open Library** — traditionally-published books (unchanged from earlier stages).
+- **AniList** (`format: NOVEL`/`ONE_SHOT` on its manga catalog) — officially-published **light novels**.
+
+Each result shows which catalog it came from, and the footer attribution updates to reflect whichever source(s) actually contributed to what's on screen. **Honest scope:** this expands coverage for licensed light novels, not raw/fan-translated web novels in general — AniList's NOVEL-format catalog has no entry at all for many hugely popular web novels that were never formally published as a book (verified directly against the live API: searching "Reverend Insanity" or "The Perfect Run" returns zero NOVEL-format results, only their unrelated manga/manhua adaptations if any exist). There is no public, unauthenticated, ToS-compliant catalog API for that case today — NovelUpdates, the closest thing to a web-novel directory, has no public API and disallows scraping, and this project won't build around bypassing that. For that case, Markly leans on what it already knows from the browser extension detection instead — see "Add or Link" below.
+
+### Reading format
+
+A novel's publication format is a separate, optional concept from its tracking media type — `mediaType` stays `"novel"` for every kind of written prose; `readingFormat` (`"book" | "light_novel" | "web_novel"`, `src/types/library-item.ts`) is a sparse, JSONB-backed metadata field (same storage pattern as `authors`/`pageCount` — no migration needed) that just describes *what kind* of novel it is. It's inferred conservatively, never asserted where there's no real signal for it: an Open Library result infers `"book"`, an AniList light-novel result infers `"light_novel"` (`inferReadingFormatFromCatalog`, `src/lib/metadata/catalog-item.ts`), and a browser-detected work with no catalog match *suggests* `"web_novel"` (never presented as verified fact) — always visible and editable via the Format field on the full item form, never locked in.
+
+### Add or Link
+
+Settings → Auto Tracking's picker for a detected-but-unlinked tracking source has three ways to resolve it:
+
+1. **Pick from your existing library** — the original Stage 18 inline picker, untouched.
+2. **Search the catalog** for richer metadata — opens the same search-and-add flow "Add Item" uses (`LibraryItemDialog`), pre-filled with the detected title and media type. Selecting a result creates a catalog-backed LibraryItem *and* carries the detected progress into it (so picking the right Mushoku Tensei light novel while on chapter 40 creates the item already at chapter 40 / Reading, not blank/Planned) — see `initialTrackingForAdd` in `LibraryItemDialog.tsx`.
+3. **Add the detected work directly** — a persistent "Detected from your reading" card (title, source origin, detected progress) with **Add & Track** (creates the item at the detected progress/status and links it immediately, no form) or **Edit Details** (the same data, reviewable/editable first via the full item form) — see `src/lib/extension/detected-item.ts` and `MetadataSearchPanel`'s `detectedFallback`.
+
+**The detected work is never gated behind catalog search failing.** An earlier version of this only showed it when the catalog returned zero results or errored — which meant it silently vanished the moment a provider returned *any* result, however irrelevant (real bug: searching a raw web novel like "Lord of the Mysteries" made Open Library return unrelated mystery novels — *Whose Body?*, *Lord Edgware Dies*, *Gaudy Night* — which counted as "results" and hid the detected-work option entirely). The detected-work card is now rendered unconditionally whenever `detectedFallback` is set, positioned above the catalog section and structurally independent of whatever state that search is in — present during loading, on zero results, on a provider error, and alongside ten irrelevant results alike. The plain "Add Item" flow (no `detectedFallback`) is unaffected and shows no such card.
+
+**Catalog relevance ranking** (`src/lib/metadata/relevance.ts`, `calculateTitleRelevance`/`partitionByRelevance`) keeps a provider's fuzzy free-text search from presenting an unrelated result as a likely match: deterministic string comparison only (no AI/LLM) sorts results into `exact` (identical, or differing only by a trailing "Vol. 1"/"Book 2" marker — so legitimate volume variants are never over-filtered), `close` (one title's significant words are an ordered prefix of the other's, or they share enough vocabulary — handles a missing article or an added subtitle), and `unrelated` (little to no real word overlap, including a deliberately-tested false-positive trap: two titles sharing only common English words like "the perfect run" vs. "how to run a perfect business" still correctly resolve to `unrelated`). `exact`/`close` results are shown normally, ranked exact-first; `unrelated` results are collapsed behind a "Show N more results" toggle rather than hidden outright. **This ranking exists purely for what `MetadataSearchPanel` displays** — Smart Auto-Link (`src/lib/extension/auto-link.ts`) has its own separate, untouched, exact-match-only comparison and was not loosened by any of this.
+
+All creation paths funnel through one shared `createAndLinkItem` in `TrackingSettingsPanel.tsx`: create the LibraryItem, **await** its cloud persistence, *then* link the tracking source — never the reverse, which would race the source's RLS ownership check against a row that doesn't exist yet. Exactly one `item_added` Activity event is recorded per creation (the item's starting progress is not a "transition" — there's no prior value to diff against — so no `progress_updated` event is generated for it, matching how a plain "Add Item" never logs one either). Once linked, `tracking_sources.library_item_id` is used directly on every later detection — title matching never runs again for that source.
+
 ## Connected Accounts (AniList)
 
 Signed-in account-mode users can optionally connect an [AniList](https://anilist.co/) account to import and manually sync their Anime/Manga tracking into Markly. This is entirely separate from Markly's own account system — it's an AniList-specific integration, requires you to already be signed into Markly, and only ever writes into *your own* Markly library.
@@ -218,11 +245,13 @@ A successful automatic advance creates a normal `progress_updated` (and `status_
 
 ### Permissions and privacy
 
-The extension requests only `storage` (to hold the device token and per-tab status) and `scripting` (to inject a content script only on tabs within `host_permissions` scope — the content script itself then picks an adapter or falls back to universal detection, see "Architecture" above) plus `host_permissions` for `http://localhost:3000/*` — the only enabled origin while only test pages exist. It does **not** request `<all_urls>`, `cookies`, `webRequest`, or `tabs`, does not read passwords or login forms, does not send full page HTML or unrelated page content to Markly (only h1/h2 text, title, a handful of metadata tags, and prev/next link hrefs are ever inspected), does not collect general browsing history, does not run on any page outside its granted scope, and does not sell or share browsing data with anyone — Markly's own servers are the only destination for any detection it sends, ever. Universal detection does not change this: it only changes *which* pages within the already-granted scope get tracked, never *how many* origins the extension can reach. A real Stage 19 site addition will request its own origin via `optional_host_permissions`, so enabling one site never grants access to another; an adapter for that site is added only where universal detection turns out to be unreliable for it.
+The extension requests `storage` (device token + per-tab status), `scripting` (content-script injection), and `activeTab` (lets the popup see the current tab's URL when opened, so it can offer "Enable Tracking" — a silent permission with no install-time warning), plus `host_permissions` for `http://localhost:3000/*` (the Markly dev/test origin, always in scope). It does **not** request `<all_urls>`, `cookies`, `webRequest`, or `tabs`. Every other site is opt-in, one origin at a time: `manifest.json` declares a wildcard scheme-and-host pattern under `optional_host_permissions` — this doesn't grant access to anything by itself, it only lists what *can later be requested* — and the extension only ever calls `chrome.permissions.request()` for one concrete origin, only from inside a genuine click on the popup's "Enable Tracking" button (see [extension/README.md § Runtime site permissions](./extension/README.md#runtime-site-permissions)). Enabling NovelPhoenix never grants access to any other site, and a user can review or revoke any granted site at any time from the extension's options page.
 
-### Current limitation
+Regardless of which sites are enabled, the extension does not read passwords or login forms, does not send full page HTML or unrelated page content to Markly (only h1/h2 text, title, a handful of metadata tags, and prev/next link hrefs are ever inspected), does not collect general browsing history, does not run on any page outside its granted scope, and does not sell or share browsing data with anyone — Markly's own servers are the only destination for any detection it sends, ever, and even that only happens for a *confident* detection (a low-confidence result stays local to the popup, never reaching the API). Universal detection does not change any of this: it only changes *which* pages within an already-granted origin get tracked, never *how many* origins the extension can reach.
 
-Only the `markly-test-reader` adapter exists, matching Markly's own controlled test page at `/dev/reader-test` (development/testing only, not a real feature). A second test page, `/dev/reader-test-generic`, deliberately uses ordinary reader-style markup with none of the first page's Markly-specific attributes, to prove universal detection works without relying on any site-specific selectors. Stage 19 adds the first real external-site adapter using the same `matches()`/`detect()` interface — see [`extension/src/adapters/`](./extension/src/adapters) — for a site where universal detection proves unreliable; sites where it works well may need no adapter at all.
+### Real-site validation (Stage 19)
+
+The first real target, [NovelPhoenix](https://novelphoenix.com), works entirely through `universal-reader` — **no dedicated adapter was created.** Verified live across 3 chapter URLs and 2 novels (stable source identity across chapters, correct title/chapter extraction, correct Next Chapter progression). Only the `markly-test-reader` adapter exists beyond that, matching Markly's own controlled test page at `/dev/reader-test` (development/testing only, not a real feature) — a second test page, `/dev/reader-test-generic`, deliberately uses ordinary reader-style markup with none of the first page's Markly-specific attributes, proving universal detection doesn't secretly depend on either. See [extension/README.md § Real-world title shapes](./extension/README.md#real-world-title-shapes) for the generic engine improvements that real-site testing turned up. A site-specific adapter (`extension/src/adapters/your-site.ts`, same `matches()`/`detect()` interface) remains available for a future site where universal detection genuinely proves unreliable.
 
 ## Project Structure
 
@@ -239,6 +268,10 @@ src/
   data/           Starter/mock library data used on first visit
   hooks/          Local/cloud-aware data hooks (useLibraryItems, useCollections, useActivity, useLocalImport)
   lib/            Pure helper functions (filtering, sorting, storage, validation, activity formatting)
+  lib/metadata/   Per-type catalog search providers + registry (see "Metadata Search" above) — novel's
+                  provider merges Open Library and AniList; every other type is a single source.
+                  relevance.ts ranks/filters a provider's results for display (see "Add or Link" above)
+                  — display-only, never touches Smart Auto-Link
   lib/cloud/      Supabase data-access + row/LibraryItem mapping + local→cloud migration
   lib/supabase/   Supabase browser/server client factories, env config, and the server-only admin
                   (Secret API Key) client used only by the extension-facing API
@@ -246,29 +279,42 @@ src/
   lib/integrations/anilist/ AniList OAuth, GraphQL client, mapping, and sync engine
   lib/extension/  Device pairing, device-token/pairing-code hashing, the pairing-endpoint rate
                   limiter, tracking-source persistence (incl. the atomic first-link claim), smart
-                  auto-linking (auto-link.ts), and the thin RPC wrapper (progress.ts) behind
-                  /api/extension/progress — the concurrency-safe compare-and-write logic itself
-                  lives in the database, see supabase/migrations/0004_*
+                  auto-linking (auto-link.ts), detected-work → LibraryItem mapping for the
+                  no-catalog-match fallback (detected-item.ts), and the thin RPC wrapper
+                  (progress.ts) behind /api/extension/progress — the concurrency-safe
+                  compare-and-write logic itself lives in the database, see
+                  supabase/migrations/0004_*
   types/          Shared TypeScript types
 scripts/
   verify-atomic-progress.mjs  Standalone concurrency check for the apply_extension_progress logic
                   (see "Progress safety" above) — run with `node scripts/verify-atomic-progress.mjs`
   verify-smart-auto-link.mjs  Standalone check for the auto-linking match rules and the concurrent
                   first-link claim (see "Source mapping" above) — run with `node scripts/verify-smart-auto-link.mjs`
+  verify-title-extraction.mjs  Standalone check for real-world page-label title cleaning (see
+                  "Real-site validation" above) — run with `node scripts/verify-title-extraction.mjs`
+  verify-detected-work.mjs  Standalone check for the detected-work fallback's format/progress/status
+                  derivation and duplicate-click guard (see "Add or Link" above) — run with
+                  `node scripts/verify-detected-work.mjs`
+  verify-title-relevance.mjs  Standalone check for catalog-result relevance ranking, including the
+                  exact "Lord of the Mysteries" / Open Library fuzzy-match bug report (see "Add or
+                  Link" above) — run with `node scripts/verify-title-relevance.mjs`
 supabase/
   migrations/     SQL schema + Row Level Security policies for the optional Supabase backend
 extension/
-  manifest.json   Manifest V3 — permissions, service worker, popup
+  manifest.json   Manifest V3 — permissions, service worker, popup, options page,
+                  optional_host_permissions (see "Runtime site permissions" above)
   src/adapters/   Site adapter interface + registry (overrides/fallbacks for specific sites)
   src/tracking/universal/  Universal detection engine (default path — see "Architecture" above):
                   metadata.ts, url.ts, headings.ts, progress.ts, navigation.ts signal extraction,
-                  confidence.ts scoring, detect.ts orchestration
+                  confidence.ts scoring, detect.ts orchestration (incl. real-world title cleaning),
+                  diagnostics.ts (dev-only console.debug explainability, never sent anywhere)
   src/background/ Service worker — the only context that holds the device token or calls the Markly
-                  API; injects the content script based on host_permissions scope only
-  src/content/    Content script — picks adapter vs. universal detection, forwards the result;
-                  never sees the device token
-  src/popup/      Plain HTML/TS/CSS popup, no framework
-  src/lib/        Extension-side storage/API/config (incl. the tracked-scope check) helpers
+                  API; injects the content script based on scope (dev origin + user-granted origins)
+  src/content/    Content script — picks adapter vs. universal detection, always reports its result
+                  (even null); never sees the device token
+  src/popup/      Plain HTML/TS/CSS popup, no framework — pairing, per-site enable prompt, page status
+  src/options/    Plain HTML/TS/CSS options page — view/revoke granted site permissions
+  src/lib/        Extension-side storage/API/config/site-permissions helpers
   scripts/build.mjs  esbuild bundler (see "Auto Tracking" above for build commands)
 ```
 

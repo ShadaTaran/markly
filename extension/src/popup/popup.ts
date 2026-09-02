@@ -1,6 +1,9 @@
 import { MARKLY_BASE_URL } from "../lib/config";
+import { hasOriginPermission, requestOriginPermission } from "../lib/site-permissions";
 import type { ExtensionMessage, TabState } from "../types/messages";
 import type { ProgressApiResult } from "../lib/api";
+
+const MARKLY_ORIGIN = new URL(MARKLY_BASE_URL).origin;
 
 /**
  * Plain DOM/TypeScript — no framework for one popup, one background
@@ -129,6 +132,8 @@ function statusLineFor(result: ProgressApiResult): StatusLine {
       return { text: "This source needs to be relinked in Markly", className: "muted", linkLabel: "Link in Markly" };
     case "unauthorized":
       return { text: "Reconnect to Markly needed", className: "muted" };
+    case "low_confidence":
+      return { text: "Markly couldn't confidently detect progress on this page.", className: "muted" };
     default:
       return { text: "Unable to reach Markly", className: "muted" };
   }
@@ -144,6 +149,19 @@ function renderPageStatus(state: TabState | null) {
   }
 
   const { detection, result } = state;
+
+  if (!detection) {
+    // The content script ran but neither an adapter nor universal
+    // detection could confidently identify progress here — distinct from
+    // "unsupported page" (state above), which means the script never ran
+    // at all.
+    statusEl.innerHTML = `
+      <p class="muted">${escapeHtml(statusLineFor(result).text)}</p>
+      <p class="muted">No automatic update.</p>
+    `;
+    return;
+  }
+
   const line = statusLineFor(result);
   const className = line.className ?? "tracked-ok";
 
@@ -159,6 +177,45 @@ function renderPageStatus(state: TabState | null) {
   });
 }
 
+/**
+ * Site permission is a separate concept from pairing: being connected to
+ * Markly says nothing about whether the extension may inspect *this*
+ * site's pages (see extension/README.md "Site permission vs. source
+ * mapping"). Requesting it must happen inside this click handler — a
+ * genuine user gesture — or Chrome silently refuses the prompt.
+ */
+function renderSitePermissionPrompt(tabId: number, url: URL) {
+  const statusEl = document.getElementById("page-status");
+  if (!statusEl) return;
+
+  statusEl.innerHTML = `
+    <p class="title">${escapeHtml(url.hostname)}</p>
+    <p class="muted">Tracking isn't enabled for this site.</p>
+    <button id="enable-site-btn" type="button">Enable Tracking</button>
+  `;
+
+  document.getElementById("enable-site-btn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    button.textContent = "Requesting…";
+
+    const granted = await requestOriginPermission(url).catch(() => false);
+    if (!granted) {
+      renderSitePermissionPrompt(tabId, url);
+      return;
+    }
+
+    // The page already finished loading before this grant existed, so
+    // chrome.tabs.onUpdated won't fire again on its own — ask the service
+    // worker to inject right now instead of waiting for the next
+    // navigation.
+    await sendMessage({ type: "INJECT_NOW", tabId });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const state = await sendMessage<TabState | null>({ type: "GET_TAB_STATUS", tabId });
+    renderPageStatus(state);
+  });
+}
+
 async function renderConnected() {
   if (!app) return;
   app.innerHTML = `
@@ -166,17 +223,40 @@ async function renderConnected() {
     <p class="status-connected">Connected ✓</p>
     <div id="page-status" class="card"><p class="muted">Checking this page…</p></div>
     <button id="disconnect-btn" type="button" class="secondary">Disconnect</button>
+    <button id="manage-sites-btn" type="button" class="secondary">Manage Sites</button>
   `;
 
   document.getElementById("disconnect-btn")?.addEventListener("click", async () => {
     await sendMessage({ type: "DISCONNECT" });
     renderDisconnected();
   });
+  document.getElementById("manage-sites-btn")?.addEventListener("click", () => {
+    chrome.runtime.openOptionsPage();
+  });
 
   const tab = await getActiveTab();
-  if (!tab?.id) {
+  if (!tab?.id || !tab.url) {
     renderPageStatus(null);
     return;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(tab.url);
+  } catch {
+    renderPageStatus(null);
+    return;
+  }
+
+  // The Markly dev/test origin is always in scope (required
+  // host_permissions); every other origin needs an explicit runtime
+  // grant, checked here rather than assumed.
+  if (url.origin !== MARKLY_ORIGIN) {
+    const granted = await hasOriginPermission(url).catch(() => false);
+    if (!granted) {
+      renderSitePermissionPrompt(tab.id, url);
+      return;
+    }
   }
 
   const state = await sendMessage<TabState | null>({ type: "GET_TAB_STATUS", tabId: tab.id });

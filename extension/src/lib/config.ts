@@ -6,21 +6,29 @@
  */
 export const MARKLY_BASE_URL = "http://localhost:3000";
 
-/**
- * Origins the content script is allowed to run on at all — currently just
- * the Markly dev origin itself, matching manifest.json's host_permissions
- * exactly. This gate is deliberately separate from "does a specific
- * adapter match this URL": the service worker injects the content script
- * on any page within this (already narrow) scope, and the content script
- * itself then decides between an adapter and universal detection (see
- * content/content-script.ts) — so universal detection can run on pages
- * with no dedicated adapter without requiring any broader permission.
- * Real Stage 19 site origins get added here (and to
- * host_permissions/optional_host_permissions) alongside their adapter,
- * never broadened speculatively ahead of time.
- */
-const TRACKED_ORIGINS = [MARKLY_BASE_URL];
+import { hasOriginPermission } from "./site-permissions";
 
-export function isWithinTrackedScope(url: URL): boolean {
-  return TRACKED_ORIGINS.includes(url.origin);
+/**
+ * Origins the content script is allowed to run on unconditionally —
+ * matches manifest.json's required host_permissions exactly (just the
+ * Markly dev/test origin). Every other origin is allowed only if the user
+ * has explicitly granted it at runtime (see site-permissions.ts and
+ * manifest.json's optional_host_permissions) — there is no separate
+ * "sites I've enabled" preference that merely claims to track this;
+ * Chrome's own granted-permission set is the only source of truth, so a
+ * permission the user revokes (via the options page or chrome://
+ * extensions) takes effect immediately without Markly needing to notice.
+ *
+ * This gate is deliberately separate from "does a specific adapter match
+ * this URL": the service worker injects the content script on any page
+ * within scope, and the content script itself then decides between an
+ * adapter and universal detection (see content/content-script.ts) — so
+ * universal detection can run on any user-enabled site without requiring
+ * a dedicated adapter or any permission broader than that one origin.
+ */
+const REQUIRED_TRACKED_ORIGINS = [MARKLY_BASE_URL];
+
+export async function isWithinTrackedScope(url: URL): Promise<boolean> {
+  if (REQUIRED_TRACKED_ORIGINS.includes(url.origin)) return true;
+  return hasOriginPermission(url);
 }
