@@ -4,6 +4,7 @@ import { parseProgressText } from "./progress";
 import { extractMetadata } from "./metadata";
 import { extractNavigation } from "./navigation";
 import { scoreSignals } from "./confidence";
+import { buildDetectedMetadata } from "./detected-metadata";
 import type { TrackingDetection, TrackingMediaType } from "../../adapters/types";
 
 /**
@@ -129,6 +130,11 @@ export function detectUniversal(document: Document, url: URL): TrackingDetection
   const workTitle = deriveWorkTitle(document, metadata);
   if (!workTitle) return null;
 
+  // Enrichment is best-effort and strictly additive — computed only after
+  // the detection itself is already confirmed confident, and its absence
+  // never affects the detection above in any way (see detected-metadata.ts).
+  const detectedMetadata = buildDetectedMetadata(document, url, urlMatch);
+
   return {
     adapterId: UNIVERSAL_DETECTOR_ID,
     sourceKey: deriveSourceKey(url, urlMatch, workTitle),
@@ -136,5 +142,6 @@ export function detectUniversal(document: Document, url: URL): TrackingDetection
     sourceTitle: workTitle,
     mediaType: mediaTypeForKind(result.kind),
     progress: { kind: result.kind, value: result.value },
+    ...(detectedMetadata && { detectedMetadata }),
   };
 }

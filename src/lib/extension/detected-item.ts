@@ -6,10 +6,12 @@ import type { TrackingSourceSummary } from "@/lib/extension/types";
 /**
  * Builds LibraryItem/tracking values directly from what the browser
  * extension already detected — the "no catalog match" fallback (see
- * README "Add or Link"). Deliberately reuses only fields
- * TrackingSourceSummary already exposes (sourceTitle, sourceUrl,
- * mediaType, lastDetectedProgress) — nothing here requires the extension
- * to collect or send anything new.
+ * README "Add or Link"). Reuses TrackingSourceSummary's own fields
+ * (sourceTitle, sourceUrl, mediaType, lastDetectedProgress, and — since
+ * Stage 21 — lastDetectedMetadata for cover/author/description/genres/
+ * a stable work URL). All of it optional; a source with none of
+ * lastDetectedMetadata's fields builds exactly the same sparse item Stage
+ * 20 always did.
  */
 
 type DetectedProgress = TrackingSourceSummary["lastDetectedProgress"];
@@ -41,15 +43,20 @@ export function buildDetectedTrackingValues(mediaType: MediaItem["type"], progre
   }
 }
 
-/** Full MediaItemInput for the one-click "Add & Track" path — no catalog data at all, just the detected title/progress/source. */
+/** Full MediaItemInput for the one-click "Add & Track" path — enriched with lastDetectedMetadata when available, but never dependent on it (see module doc comment). */
 export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaItemInput {
+  const metadata = source.lastDetectedMetadata;
   const common = {
     title: source.sourceTitle,
-    description: "",
+    description: metadata?.description ?? "",
     category: "",
     tags: [] as string[],
-    imageUrl: undefined,
-    sourceUrl: source.sourceUrl ?? undefined,
+    // Prefer the stable work URL Stage 21 may have derived over the
+    // current chapter's URL — the chapter URL is still a reasonable
+    // fallback (better than nothing), it's just not the page a "view
+    // source" action should ideally land on months later.
+    sourceUrl: metadata?.workUrl ?? source.sourceUrl ?? undefined,
+    imageUrl: metadata?.coverUrl,
     status: initialStatusFor(source.mediaType),
     rating: undefined,
     releaseYear: undefined,
@@ -63,7 +70,7 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
         ...common,
         currentEpisode: progress?.kind === "episode" ? progress.value : undefined,
         totalEpisodes: undefined,
-        genres: undefined,
+        genres: metadata?.genres,
         studio: undefined,
       };
     case "series":
@@ -71,22 +78,22 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
         ...common,
         currentEpisode: progress?.kind === "episode" ? progress.value : undefined,
         totalEpisodes: undefined,
-        genres: undefined,
+        genres: metadata?.genres,
       };
     case "manga":
       return {
         ...common,
         currentChapter: progress?.kind === "chapter" ? progress.value : undefined,
         totalChapters: undefined,
-        genres: undefined,
-        authors: undefined,
+        genres: metadata?.genres,
+        authors: metadata?.authors,
       };
     case "novel":
       return {
         ...common,
         progressValue: progress?.value,
         progressUnit: normalizeDetectedProgressUnit(progress?.kind),
-        authors: undefined,
+        authors: metadata?.authors,
         pageCount: undefined,
         // Suggestion, not fact — a chapter-based reader with no catalog
         // match is *usually* a web novel, but this is always editable
@@ -103,6 +110,6 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
         catalogPlatforms: undefined,
       };
     case "movie":
-      return { ...common, genres: undefined };
+      return { ...common, genres: metadata?.genres };
   }
 }

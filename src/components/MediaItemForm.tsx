@@ -22,6 +22,11 @@ export interface DetectedPrefill extends Partial<PersonalTrackingValues> {
   title: string;
   sourceUrl?: string;
   readingFormat?: NovelReadingFormat;
+  /** Safe enrichment metadata (Stage 21) — see lib/extension/detected-item.ts / README "Metadata Enrichment". Absent just as often as present; the form works identically either way. */
+  imageUrl?: string;
+  description?: string;
+  authors?: string[];
+  genres?: string[];
 }
 
 interface MediaItemFormProps {
@@ -80,8 +85,8 @@ type FormErrors = Partial<
 function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: MetadataDetails, detected?: DetectedPrefill): FormState {
   return {
     title: item?.title ?? prefill?.title ?? detected?.title ?? "",
-    description: item?.description ?? prefill?.description ?? "",
-    imageUrl: item?.imageUrl ?? prefill?.imageUrl ?? "",
+    description: item?.description ?? prefill?.description ?? detected?.description ?? "",
+    imageUrl: item?.imageUrl ?? prefill?.imageUrl ?? detected?.imageUrl ?? "",
     sourceUrl: item?.sourceUrl ?? detected?.sourceUrl ?? "",
     category: item?.category ?? "",
     tags: item?.tags.join(", ") ?? "",
@@ -139,7 +144,9 @@ function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: Metada
         ? item.authors.join(", ")
         : !item && (type === "novel" || type === "manga") && prefill?.authors
           ? prefill.authors.join(", ")
-          : "",
+          : !item && (type === "novel" || type === "manga") && detected?.authors
+            ? detected.authors.join(", ")
+            : "",
     studio:
       item && item.type === "anime"
         ? item.studio ?? ""
@@ -193,6 +200,10 @@ export function MediaItemForm({
   // untouched from the search selection — captured once here so editing an
   // existing item (prefill is never passed then) can't clobber them.
   const [catalogData] = useState<MetadataDetails | undefined>(() => (initialValues ? undefined : prefill));
+  // Same idea as catalogData, for the safe metadata a detection may have
+  // found (Stage 21) — genres has no form input of its own, so it's
+  // carried through untouched rather than round-tripped through `values`.
+  const [detectedGenres] = useState<string[] | undefined>(() => (initialValues ? undefined : detected?.genres));
   const datalistId = useId();
 
   function updateField<K extends keyof FormState>(field: K, value: string) {
@@ -255,7 +266,7 @@ export function MediaItemForm({
           ...common,
           currentEpisode: current.value,
           totalEpisodes: total.value,
-          genres: catalogData?.genres,
+          genres: catalogData?.genres ?? detectedGenres,
           studio: emptyToUndefined(values.studio),
         });
       } else {
@@ -263,7 +274,7 @@ export function MediaItemForm({
           ...common,
           currentEpisode: current.value,
           totalEpisodes: total.value,
-          genres: catalogData?.genres,
+          genres: catalogData?.genres ?? detectedGenres,
         });
       }
       return;
@@ -293,7 +304,7 @@ export function MediaItemForm({
         ...common,
         currentChapter: current.value,
         totalChapters: total.value,
-        genres: catalogData?.genres,
+        genres: catalogData?.genres ?? detectedGenres,
         authors: mangaAuthors.length > 0 ? mangaAuthors : undefined,
       });
       return;
@@ -350,7 +361,7 @@ export function MediaItemForm({
       setErrors(nextErrors);
       return;
     }
-    onSubmit({ ...common, genres: catalogData?.genres });
+    onSubmit({ ...common, genres: catalogData?.genres ?? detectedGenres });
   }
 
   const label = ITEM_TYPE_LABELS[type];

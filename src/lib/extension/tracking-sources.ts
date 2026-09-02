@@ -1,8 +1,25 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MediaItem } from "@/types/library-item";
+import type { DetectedMetadata } from "@/lib/extension/detected-metadata";
 
 const TABLE = "tracking_sources";
+
+/**
+ * `last_detected_progress` predates Stage 21 and its DB column keeps that
+ * name (no migration needed for this — see README "Metadata Enrichment"),
+ * but its JSON value now optionally also carries the last confidently
+ * detected enrichment metadata alongside the progress it was always
+ * storing. Application code (TrackingSourceSummary, mapped in
+ * app/settings/tracking/page.tsx and app/api/tracking-sources/route.ts)
+ * presents these as two separate, cleanly-named fields regardless of how
+ * they're stored together here.
+ */
+export interface StoredDetectionProgress {
+  kind: string;
+  value: number;
+  metadata?: DetectedMetadata;
+}
 
 export interface TrackingSourceRow {
   id: string;
@@ -14,7 +31,7 @@ export interface TrackingSourceRow {
   source_url: string | null;
   media_type: MediaItem["type"];
   auto_track_enabled: boolean;
-  last_detected_progress: { kind: string; value: number } | null;
+  last_detected_progress: StoredDetectionProgress | null;
   last_seen_at: string;
   created_at: string;
   updated_at: string;
@@ -27,6 +44,7 @@ export interface DetectionInput {
   sourceUrl: string | null;
   mediaType: MediaItem["type"];
   progress: { kind: string; value: number };
+  detectedMetadata?: DetectedMetadata;
 }
 
 /**
@@ -51,7 +69,7 @@ export async function recordDetection(admin: SupabaseClient, userId: string, inp
         source_title: input.sourceTitle,
         source_url: input.sourceUrl,
         media_type: input.mediaType,
-        last_detected_progress: input.progress,
+        last_detected_progress: { ...input.progress, ...(input.detectedMetadata && { metadata: input.detectedMetadata }) },
         last_seen_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },

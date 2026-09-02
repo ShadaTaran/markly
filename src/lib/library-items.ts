@@ -221,6 +221,7 @@ export function createMediaItem(
         progressUnit: "progressUnit" in values ? values.progressUnit : undefined,
         authors: "authors" in values ? values.authors : undefined,
         pageCount: "pageCount" in values ? values.pageCount : undefined,
+        readingFormat: "readingFormat" in values ? values.readingFormat : undefined,
       };
     case "movie":
       return { ...base, type, genres: "genres" in values ? values.genres : undefined };
@@ -274,6 +275,7 @@ export function updateMediaItem(item: MediaItem, values: MediaItemInput): MediaI
         progressValue: "progressValue" in values ? values.progressValue : undefined,
         progressUnit: "progressUnit" in values ? values.progressUnit : undefined,
         authors: "authors" in values ? values.authors : undefined,
+        readingFormat: "readingFormat" in values ? values.readingFormat : undefined,
       };
     case "movie":
       return { ...base, type: item.type };

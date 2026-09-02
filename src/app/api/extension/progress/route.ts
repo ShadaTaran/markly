@@ -4,6 +4,8 @@ import { authenticateDevice } from "@/lib/extension/devices";
 import { getSourceByKey, recordDetection, claimSourceLink, clearBrokenLink } from "@/lib/extension/tracking-sources";
 import { attemptSmartAutoLink } from "@/lib/extension/auto-link";
 import { applyDetectionToItem } from "@/lib/extension/progress";
+import { parseDetectedMetadata } from "@/lib/extension/detected-metadata";
+import { enrichLibraryItemIfSparse } from "@/lib/extension/enrichment";
 import type { MediaItem } from "@/types/library-item";
 
 const TRACKABLE_TYPES: readonly MediaItem["type"][] = ["anime", "manga", "novel", "game", "movie", "series"];
@@ -15,6 +17,7 @@ interface ProgressRequestBody {
   sourceTitle?: string;
   mediaType?: string;
   progress?: { kind?: string; value?: number };
+  detectedMetadata?: unknown;
 }
 
 function isMediaType(value: string | undefined): value is MediaItem["type"] {
@@ -54,6 +57,10 @@ export async function POST(request: Request) {
   const mediaType = body.mediaType;
   const progressKind = typeof body.progress?.kind === "string" ? body.progress.kind : "";
   const progressValue = typeof body.progress?.value === "number" ? body.progress.value : NaN;
+  // Never trust the extension's own bounds — re-validated from scratch
+  // here regardless of what shape it arrived in. Absent/invalid is not an
+  // error; it just means no enrichment happens for this request.
+  const detectedMetadata = parseDetectedMetadata(body.detectedMetadata);
 
   if (
     !adapterId ||
@@ -77,6 +84,7 @@ export async function POST(request: Request) {
       sourceUrl,
       mediaType,
       progress: { kind: progressKind, value: progressValue },
+      ...(detectedMetadata && { detectedMetadata }),
     });
 
     if (existing && !existing.auto_track_enabled) {
@@ -114,6 +122,16 @@ export async function POST(request: Request) {
       await clearBrokenLink(admin, detected.id);
       return NextResponse.json({ status: "needs_link", reason: "no_match" });
     }
+
+    // Best-effort, silent, and strictly additive — never allowed to affect
+    // the response or fail the request that just successfully recorded a
+    // real progress update (errors are swallowed, not surfaced). Awaited
+    // rather than fire-and-forget so it actually runs to completion even
+    // under a serverless deployment, which can tear down the function as
+    // soon as the response is sent and abandon any unawaited work. See
+    // enrichment.ts for the "fill empty fields only" merge policy and why
+    // this doesn't need atomic RPC treatment the way progress does.
+    await enrichLibraryItemIfSparse(admin, device.userId, libraryItemId, mediaType, detectedMetadata).catch(() => undefined);
 
     return NextResponse.json({
       status: result.status,

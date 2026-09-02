@@ -19,7 +19,8 @@ export async function GET() {
       mediaType: row.media_type,
       libraryItemId: row.library_item_id,
       autoTrackEnabled: row.auto_track_enabled,
-      lastDetectedProgress: row.last_detected_progress,
+      lastDetectedProgress: row.last_detected_progress ? { kind: row.last_detected_progress.kind, value: row.last_detected_progress.value } : null,
+      lastDetectedMetadata: row.last_detected_progress?.metadata,
       lastSeenAt: row.last_seen_at,
     }));
     return NextResponse.json({ sources });

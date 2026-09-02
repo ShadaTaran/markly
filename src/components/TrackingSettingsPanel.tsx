@@ -310,6 +310,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
         title: addLinkSource.sourceTitle,
         sourceLabel: hostnameFromSourceUrl(addLinkSource.sourceUrl),
         progressLabel: addLinkSource.lastDetectedProgress ? progressLabel(addLinkSource.lastDetectedProgress) : undefined,
+        coverUrl: addLinkSource.lastDetectedMetadata?.coverUrl,
         onAddAndTrack: handleAddDetectedWork,
         onEditDetails: openEditDetails,
         busy: busy === `add-link-${addLinkSource.id}`,
@@ -529,9 +530,13 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
             type={addLinkSource.mediaType}
             detected={{
               title: addLinkSource.sourceTitle,
-              sourceUrl: addLinkSource.sourceUrl ?? undefined,
+              sourceUrl: addLinkSource.lastDetectedMetadata?.workUrl ?? addLinkSource.sourceUrl ?? undefined,
               readingFormat: addLinkSource.mediaType === "novel" ? "web_novel" : undefined,
               status: "in_progress",
+              imageUrl: addLinkSource.lastDetectedMetadata?.coverUrl,
+              description: addLinkSource.lastDetectedMetadata?.description,
+              authors: addLinkSource.lastDetectedMetadata?.authors,
+              genres: addLinkSource.lastDetectedMetadata?.genres,
               ...buildDetectedTrackingValues(addLinkSource.mediaType, addLinkSource.lastDetectedProgress),
             }}
             existingCategories={getUniqueCategories(libraryItems ?? [])}

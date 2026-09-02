@@ -6,7 +6,7 @@ import type {
   SupportedItemType,
   WebsiteItem,
 } from "@/types/library-item";
-import { SUPPORTED_ITEM_TYPES } from "@/types/library-item";
+import { NOVEL_READING_FORMAT_LABELS, SUPPORTED_ITEM_TYPES } from "@/types/library-item";
 
 export interface MetadataRow {
   label: string;
@@ -66,6 +66,7 @@ export function getCatalogMetadataRows(item: MediaItem): MetadataRow[] {
         rows.push({ label: "Author(s)", value: item.authors.join(", ") });
       }
       if (item.pageCount) rows.push({ label: "Pages", value: String(item.pageCount) });
+      if (item.readingFormat) rows.push({ label: "Format", value: NOVEL_READING_FORMAT_LABELS[item.readingFormat] });
       break;
     case "game":
       if (item.developer) rows.push({ label: "Developer", value: item.developer });

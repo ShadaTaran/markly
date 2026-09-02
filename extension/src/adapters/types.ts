@@ -10,6 +10,21 @@ export interface TrackingProgress {
 
 export type TrackingMediaType = "anime" | "manga" | "novel" | "game" | "movie" | "series";
 
+/**
+ * Optional, safe enrichment metadata — see
+ * tracking/universal/detected-metadata.ts for exactly what feeds this and
+ * why each field is safe. Every field is optional; tracking never depends
+ * on any of them being present. Never the chapter's own text.
+ */
+export interface DetectedMetadata {
+  /** Stable work-page URL (chapter segment stripped), when derivable — never the chapter URL itself. */
+  workUrl?: string;
+  coverUrl?: string;
+  authors?: string[];
+  description?: string;
+  genres?: string[];
+}
+
 export interface TrackingDetection {
   adapterId: string;
   /** Stable identity for the WORK (e.g. "lord-of-mysteries") — never the current chapter's URL, since that changes every chapter. */
@@ -18,6 +33,8 @@ export interface TrackingDetection {
   sourceTitle: string;
   mediaType: TrackingMediaType;
   progress: TrackingProgress;
+  /** Optional — see DetectedMetadata. Absent for the vast majority of adapters/pages, and that's fine. */
+  detectedMetadata?: DetectedMetadata;
 }
 
 /**

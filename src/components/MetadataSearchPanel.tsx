@@ -39,6 +39,8 @@ export interface DetectedFallback {
   title: string;
   sourceLabel: string;
   progressLabel?: string;
+  /** Safe cover art from the detection (Stage 21 metadata enrichment) — shown only when actually present, never a placeholder. */
+  coverUrl?: string;
   onAddAndTrack: () => void;
   onEditDetails: () => void;
   busy: boolean;
@@ -169,11 +171,23 @@ export function MetadataSearchPanel({ itemType, onSelect, onManualEntry, initial
       {detectedFallback && (
         <div className="rounded-md border border-border bg-surface p-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Detected from your reading</p>
-          <p className="mt-1.5 text-sm font-medium text-foreground">{detectedFallback.title}</p>
-          <p className="text-xs text-muted-foreground">
-            {detectedFallback.sourceLabel}
-            {detectedFallback.progressLabel ? ` · ${detectedFallback.progressLabel}` : ""}
-          </p>
+          <div className="mt-1.5 flex items-start gap-2.5">
+            {detectedFallback.coverUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- plain <img> matches ItemCover's convention; this is an arbitrary external URL, not a local/optimizable asset.
+              <img
+                src={detectedFallback.coverUrl}
+                alt=""
+                className="h-14 w-10 shrink-0 rounded object-cover"
+              />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">{detectedFallback.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {detectedFallback.sourceLabel}
+                {detectedFallback.progressLabel ? ` · ${detectedFallback.progressLabel}` : ""}
+              </p>
+            </div>
+          </div>
           <div className="mt-2.5 flex items-center gap-2">
             <button
               type="button"
