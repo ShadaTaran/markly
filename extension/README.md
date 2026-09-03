@@ -255,6 +255,36 @@ Nothing in `background/` or `popup/` needs to change for a new adapter —
 only `content-script.ts`'s existing adapter-first/universal-fallback logic
 picks it up automatically once it's registered.
 
+## Real-world manga tracking (Stage 23)
+
+`src/adapters/mangadex.ts` is a worked example of the guidance above,
+written only after confirming universal detection genuinely couldn't reach
+its own confidence threshold there (zero heading elements, no numeric
+chapter in the URL — see the root README's "Real-World Manga Tracking"
+section for the full live-inspection findings, including a real post-
+deploy bug fix: `og:title` never updates on MangaDex's client-side
+navigation, so it's deliberately not used at all — `document.title` is the
+sole chapter-number source, and work identity/title comes from the page's
+own `/title/<uuid>/<slug>` anchor instead). It's deliberately thin:
+`parseProgressText` and `buildDetectedMetadata` are reused verbatim from
+`tracking/universal/`, not reimplemented.
+
+Two pieces of this stage are generic, not MangaDex-specific, and apply to
+any future site:
+
+- **`tracking/universal/site-capability.ts`** — a small hostname → media-
+  type lookup, for a page universal detection *can* confidently read on
+  its own but whose "chapter" is ambiguous between manga and novel. Not a
+  substitute for an adapter when the real problem is detection confidence
+  itself, as it was for MangaDex — see the module's own doc comment for
+  the distinction.
+- **SPA navigation support in `content-script.ts`** — a `history.pushState`/
+  `replaceState`/`popstate` listener, debounced 600ms, that re-runs
+  detection when a client-side router changes the URL without a full page
+  reload. Verified necessary and working against MangaDex's real Vue
+  Router-based reader; benefits any other client-side-routed site for
+  free, with no site-specific code.
+
 ## Security notes for contributors
 
 - The device token lives only in `chrome.storage.local`, restricted to

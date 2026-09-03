@@ -5,6 +5,7 @@ import { extractMetadata } from "./metadata";
 import { extractNavigation } from "./navigation";
 import { scoreSignals } from "./confidence";
 import { buildDetectedMetadata } from "./detected-metadata";
+import { siteMediaCapability } from "./site-capability";
 import type { TrackingDetection, TrackingMediaType } from "../../adapters/types";
 
 /**
@@ -15,12 +16,17 @@ import type { TrackingDetection, TrackingMediaType } from "../../adapters/types"
  */
 export const UNIVERSAL_DETECTOR_ID = "universal-reader";
 
-function mediaTypeForKind(kind: "chapter" | "episode"): TrackingMediaType {
+function mediaTypeForKind(kind: "chapter" | "episode", hostname: string): TrackingMediaType {
   // Universal detection can tell "chapter" from "episode" but not, from
-  // generic page structure alone, manga from novel or anime from series
-  // — that disambiguation is exactly what a site-specific adapter is for
-  // (see extension/README.md). novel/anime are the closest safe defaults.
-  return kind === "chapter" ? "novel" : "anime";
+  // generic page structure alone, manga from novel or anime from series —
+  // no safe generic DOM signal distinguishes them (see site-capability.ts
+  // for why "many <img> tags" or similar page-structure guessing is
+  // deliberately not used). The tiny site-capability registry resolves
+  // this for the small number of sites we have real evidence about;
+  // everything else falls back to novel/anime, the same defaults as
+  // before Stage 23.
+  if (kind === "episode") return "anime";
+  return siteMediaCapability(hostname) === "manga" ? "manga" : "novel";
 }
 
 const TITLE_SEGMENT_SEPARATOR = /\s+[-|:–—]\s+/;
@@ -77,7 +83,8 @@ function extractWorkTitleFromLabel(text: string): string {
   return text.trim();
 }
 
-function deriveWorkTitle(document: Document, metadata: ReturnType<typeof extractMetadata>): string | null {
+/** Exported for reuse by adapters whose own markup defeats generic confidence extraction but still benefits from the same title-isolation logic (see mangadex.ts) — never reimplemented per-adapter. */
+export function deriveWorkTitle(document: Document, metadata: ReturnType<typeof extractMetadata>): string | null {
   const candidate = metadata.ogTitle ?? metadata.jsonLdName ?? document.querySelector("h1")?.textContent ?? document.title;
   if (!candidate) return null;
   const extracted = extractWorkTitleFromLabel(candidate);
@@ -140,7 +147,7 @@ export function detectUniversal(document: Document, url: URL): TrackingDetection
     sourceKey: deriveSourceKey(url, urlMatch, workTitle),
     sourceUrl: url.toString(),
     sourceTitle: workTitle,
-    mediaType: mediaTypeForKind(result.kind),
+    mediaType: mediaTypeForKind(result.kind, url.hostname),
     progress: { kind: result.kind, value: result.value },
     ...(detectedMetadata && { detectedMetadata }),
   };

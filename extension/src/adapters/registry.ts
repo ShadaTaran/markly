@@ -1,5 +1,6 @@
 import type { TrackingAdapter } from "./types";
 import { marklyTestReaderAdapter } from "./markly-test-reader";
+import { mangadexAdapter } from "./mangadex";
 
 /**
  * Every supported site, in one place. Stage 19 adds a real adapter (e.g.
@@ -7,7 +8,7 @@ import { marklyTestReaderAdapter } from "./markly-test-reader";
  * nothing in background/content/popup needs to change, and nothing here
  * needs to change in them either.
  */
-export const adapters: readonly TrackingAdapter[] = [marklyTestReaderAdapter];
+export const adapters: readonly TrackingAdapter[] = [marklyTestReaderAdapter, mangadexAdapter];
 
 export function findMatchingAdapter(url: URL): TrackingAdapter | null {
   return adapters.find((adapter) => adapter.matches(url)) ?? null;

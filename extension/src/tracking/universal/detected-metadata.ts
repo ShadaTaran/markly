@@ -92,6 +92,31 @@ function boundedGenres(candidates: string[]): string[] | undefined {
   return genres.length > 0 ? genres : undefined;
 }
 
+export interface BuildDetectedMetadataOptions {
+  /**
+   * Stage 23 — an adapter-supplied work URL, used instead of deriving one
+   * from urlMatch.strippedPath. Needed for sites like MangaDex whose
+   * chapter URLs carry no path pattern url.ts recognizes at all (a chapter
+   * UUID, not a numbered segment) but which do link to a real, stable work
+   * URL elsewhere on the same page (see mangadex.ts) — still zero extra
+   * network requests, just a different, equally real signal.
+   */
+  workUrlOverride?: string;
+  /**
+   * Stage 23 — false when the current page's og:image is known NOT to be
+   * a stable per-work cover (observed on MangaDex: a chapter page's
+   * og:image is generated per-chapter, e.g.
+   * og.mangadex.org/og-image/chapter/<uuid>, distinct from the work page's
+   * own og.mangadex.org/og-image/manga/<uuid> — extracting it here would
+   * silently store the wrong, chapter-specific image as if it were the
+   * series cover, and Stage 21's fill-once merge policy would then never
+   * self-correct it). Defaults to true — every other site this reads
+   * (NovelPhoenix included) uses the same og:image on chapter and work
+   * pages alike, which is the common, safe case.
+   */
+  trustPageCover?: boolean;
+}
+
 /**
  * Builds the optional enrichment payload for a confident detection.
  * Returns undefined (not an empty object) when nothing safe/usable was
@@ -99,13 +124,21 @@ function boundedGenres(candidates: string[]): string[] | undefined {
  * Stage 21. Never required for tracking to work — see detect.ts, which
  * calls this only after a detection is already confirmed confident.
  */
-export function buildDetectedMetadata(document: Document, url: URL, urlMatch: UrlProgressMatch | null): DetectedMetadata | undefined {
+export function buildDetectedMetadata(
+  document: Document,
+  url: URL,
+  urlMatch: UrlProgressMatch | null,
+  options?: BuildDetectedMetadataOptions,
+): DetectedMetadata | undefined {
   const metadata = extractMetadata(document);
   const siteIdentity = readSiteIdentity(document);
 
-  const workUrl =
-    urlMatch && urlMatch.strippedPath.length > 1 ? boundedHttpUrl(`${url.origin}${urlMatch.strippedPath}`, url) : undefined;
-  const coverUrl = boundedHttpUrl(metadata.ogImage, url);
+  const workUrl = options?.workUrlOverride
+    ? boundedHttpUrl(options.workUrlOverride, url)
+    : urlMatch && urlMatch.strippedPath.length > 1
+      ? boundedHttpUrl(`${url.origin}${urlMatch.strippedPath}`, url)
+      : undefined;
+  const coverUrl = options?.trustPageCover === false ? undefined : boundedHttpUrl(metadata.ogImage, url);
   const description = boundedDescription(metadata.description);
   const metaAuthor = readMetaAuthor(document);
   const authorCandidates = metadata.authors.length > 0 ? metadata.authors : metaAuthor ? [metaAuthor] : [];
