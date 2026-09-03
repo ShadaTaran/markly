@@ -276,6 +276,39 @@ Concurrency-wise, this deliberately does **not** use migration 0004's row-lockin
 
 **What NovelPhoenix actually offers, verified live against a real chapter and work page:** `og:image` — a genuine, stable per-work cover (same URL on both page types) — extracted and used. `og:description`/`meta[name="description"]` — boilerplate on both page types, correctly filtered to nothing. `meta[name="author"]` — the site's own name, correctly filtered to nothing. Genre — present only as a `BreadcrumbList` link on the *work* page (e.g. "Xuanhuan"), not as a structured JSON-LD `genre` field anywhere, and not present at all on the chapter page the extension is actually reading; extracting it would require an extra background fetch of a second page and a breadcrumb-specific heuristic — deliberately **not implemented**, since it's exactly the kind of brittle site-specific reach-around Stage 21 was told to avoid. Generic JSON-LD `genre` extraction is still implemented for sites that do expose it directly (author/manga catalog sites commonly do); NovelPhoenix itself just yields nothing there. **Conclusion: detector `universal-reader`, metadata adapter `none`** — no NovelPhoenix-specific code exists anywhere in the metadata path.
 
+### Optional Zero-Touch Auto-Add (Stage 22)
+
+Stage 20/21's "Add or Link" still requires one click ("Add & Track") the first time Markly sees a work it doesn't already have. Stage 22 adds an **opt-in, off by default** preference that skips that click: when a detection confidently matches nothing already in the library, Markly creates the LibraryItem and links it automatically instead of waiting.
+
+**Device-level, not account-level.** The toggle ("Automatically add new works") lives on each paired browser extension device, in Settings → Auto Tracking, under that device's row — not a global account setting. `extension_devices` already exists 1:1 per paired install and every request is already authenticated to a specific device (`authenticateDevice`, `src/lib/extension/devices.ts`), so this needed no new trust surface, and it directly matches the real use case (enabled on a phone browser, off on a work laptop, say). **Default is OFF for every device, including ones paired before this feature existed** — enabling it is always a deliberate, per-device action; nothing is turned on automatically. Turning it back off only affects *future* unknown works — it never unlinks a source, deletes an auto-added item, or stops tracking anything already linked.
+
+**One source of truth.** The preference is read and written only through `/api/extension/devices/auto-add`, the same session-authenticated route Settings uses. The extension popup does not maintain a second copy of it — deliberately: the per-source `auto_track_enabled` toggle already established the precedent of being a web-Settings-only control, and adding a second UI surface for a rarely-changed boolean would only risk the "web says on, extension says off" split explicitly worth avoiding for a little convenience. The popup *does* change what it shows after a detection (see "Popup states" below), driven entirely by the same API response every other tracked page already uses.
+
+**Priority — exact match still wins, ambiguous never auto-adds:**
+```
+source already linked?      → track (auto-add never re-considered)
+attemptSmartAutoLink:
+  unique exact title match  → link it (Stage 18, unchanged)
+  ambiguous                 → needs_link — auto-add or not, never guesses
+  no_match + auto-add ON    → create + link (this stage)
+  no_match + auto-add OFF   → needs_link (Stage 20/21, unchanged)
+```
+Smart Auto-Link's own matching code (`src/lib/extension/auto-link.ts`) is untouched by this stage — auto-add only ever runs *after* it has already returned `no_match`, never in place of it, and its exact-match-only rule is not loosened anywhere.
+
+**Atomicity — two locks, not one.** A device with auto-add on can receive many near-identical detections for a brand-new work in quick succession (retries, multiple tabs, a reload storm) — client-side button disabling doesn't apply here, since there's no button. `auto_add_and_link_source` (`supabase/migrations/0005_stage22_auto_add.sql`) handles this with two locks in one transaction:
+1. `select ... for update` on the `tracking_sources` row — the same pattern as 0004's `apply_extension_progress` — serializes concurrent requests for the *same* source; a losing concurrent call sees `library_item_id` already set and links to nothing new.
+2. `pg_advisory_xact_lock`, keyed on `(user, media type, normalized title)` — closes a narrower race the first lock alone can't: two *different*, both brand-new sources that happen to name the exact same work (e.g. two tabs, two sites, the same novel, at the same instant). Under the lock, `library_items` is re-checked once more for an exact match before anything is created; a match found here links instead of creating a second item.
+
+Either lock resolving to "something already exists" is exactly as valid an outcome as "I created it" — the RPC returns `created`, `linked_existing`, or `already_linked` accordingly, and the API layer only ever reports a one-time `autoAdded: true` on the literal request that created the item (mirroring how `autoLinked: true` already worked for Stage 18's smart-auto-link).
+
+**Server-side only.** The extension still sends nothing but a normalized detection (title/mediaType/progress/optional Stage 21 metadata) — never a LibraryItem id, never a userId, never the auto-add preference itself. Everything used to decide whether and what to create — the device's own preference, the authenticated `userId`, the match/ambiguity check — is derived server-side from the authenticated device token, the same as every other write this API makes.
+
+**Created item fields.** Reuses Stage 20/21's `buildDetectedMediaInput` untouched (`src/lib/extension/detected-item.ts`) via a new `attemptAutoAdd` (`src/lib/extension/auto-add.ts`) that converts its result through the existing `createMediaItem`/`toLibraryItemRow` — an auto-added item has the exact same title/status/progress/readingFormat-suggestion/detected-metadata fields a manual "Add & Track" click would have produced, not a separate, thinner code path. No external catalog lookup (Open Library/AniList) is ever made as part of this — auto-add only uses what the current page already offered; catalog enrichment remains a manual, later action via the existing search flow.
+
+**Activity.** One `item_added` event on creation — same shape as every other creation path (catalog search, manual entry, AniList import, or Stage 20's detected-work fallback all look identical in Activity; `item_added` has no provenance field for any of them, so this doesn't invent one just for auto-add). The initial progress baked into the item at creation is not a "transition" (no prior value to diff against), so it produces no `progress_updated` event — same rule Stage 20 already established for manual Add & Track. Enrichment (Stage 21) remains silent either way.
+
+**Known limitation, stated plainly:** the advisory lock closes the cross-source race *for auto-add against itself*. It does not (and cannot, without a much broader change) close a race against a plain manual "Add Item" happening at the exact same instant for the exact same title — that path was never lock-protected even before this stage. This is an extremely narrow, pre-existing gap in the wider architecture, not something Stage 22 introduces or claims to have closed.
+
 ## Project Structure
 
 ```

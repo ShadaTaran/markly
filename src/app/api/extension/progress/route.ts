@@ -3,10 +3,13 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { authenticateDevice } from "@/lib/extension/devices";
 import { getSourceByKey, recordDetection, claimSourceLink, clearBrokenLink } from "@/lib/extension/tracking-sources";
 import { attemptSmartAutoLink } from "@/lib/extension/auto-link";
+import { attemptAutoAdd } from "@/lib/extension/auto-add";
 import { applyDetectionToItem } from "@/lib/extension/progress";
 import { parseDetectedMetadata } from "@/lib/extension/detected-metadata";
 import { enrichLibraryItemIfSparse } from "@/lib/extension/enrichment";
+import { logSanitizedError } from "@/lib/extension/log-error";
 import type { MediaItem } from "@/types/library-item";
+import type { TrackingSourceSummary } from "@/lib/extension/types";
 
 const TRACKABLE_TYPES: readonly MediaItem["type"][] = ["anime", "manga", "novel", "game", "movie", "series"];
 
@@ -93,6 +96,7 @@ export async function POST(request: Request) {
 
     let libraryItemId = existing?.library_item_id ?? null;
     let autoLinked = false;
+    let autoAdded = false;
 
     if (!libraryItemId) {
       // No established mapping yet — either a brand-new source, or one
@@ -101,15 +105,46 @@ export async function POST(request: Request) {
       // manual linking; never re-attempted once a mapping exists (see
       // lib/extension/auto-link.ts for the matching rules).
       const outcome = await attemptSmartAutoLink(admin, device.userId, mediaType, sourceTitle);
-      if (outcome.kind !== "matched") {
-        return NextResponse.json({ status: "needs_link", reason: outcome.kind });
+      if (outcome.kind === "matched") {
+        // Atomic claim: if a concurrent identical first detection already
+        // won this link, this returns *that* id rather than silently
+        // trusting our own (deterministically identical, in the ordinary
+        // case) candidate — see claimSourceLink.
+        libraryItemId = await claimSourceLink(admin, device.userId, detected.id, outcome.libraryItemId);
+        autoLinked = true;
+      } else if (outcome.kind === "no_match" && device.autoAddEnabled) {
+        // Stage 22: exact match still wins (above); ambiguous still never
+        // auto-creates (outcome.kind === "ambiguous" falls through to the
+        // needs_link response below, same as when auto-add is off). Only
+        // a genuine "nothing matches" reaches here, and only when this
+        // specific device has opted in.
+        const source: TrackingSourceSummary = {
+          id: detected.id,
+          adapterId,
+          sourceTitle,
+          sourceUrl,
+          mediaType,
+          libraryItemId: null,
+          autoTrackEnabled: true,
+          lastDetectedProgress: { kind: progressKind, value: progressValue },
+          ...(detectedMetadata && { lastDetectedMetadata: detectedMetadata }),
+          lastSeenAt: new Date().toISOString(),
+        };
+        const addOutcome = await attemptAutoAdd(admin, device.userId, detected.id, mediaType, source);
+        if (addOutcome.kind === "created") {
+          libraryItemId = addOutcome.libraryItemId;
+          autoAdded = true;
+        } else if (addOutcome.kind === "linked_existing" || addOutcome.kind === "already_linked") {
+          libraryItemId = addOutcome.libraryItemId;
+          autoLinked = addOutcome.kind === "linked_existing";
+        }
+        // "ambiguous" / "source_not_found" / "invalid_title" all fall
+        // through to the needs_link response below, unchanged.
       }
-      // Atomic claim: if a concurrent identical first detection already
-      // won this link, this returns *that* id rather than silently
-      // trusting our own (deterministically identical, in the ordinary
-      // case) candidate — see claimSourceLink.
-      libraryItemId = await claimSourceLink(admin, device.userId, detected.id, outcome.libraryItemId);
-      autoLinked = true;
+
+      if (!libraryItemId) {
+        return NextResponse.json({ status: "needs_link", reason: outcome.kind === "ambiguous" ? "ambiguous" : "no_match" });
+      }
     }
 
     // The read, the compare, the write, and the Activity insert(s) all
@@ -137,8 +172,15 @@ export async function POST(request: Request) {
       status: result.status,
       currentValue: result.currentValue,
       ...(autoLinked ? { autoLinked: true } : {}),
+      ...(autoAdded ? { autoAdded: true } : {}),
     });
-  } catch {
+  } catch (err) {
+    // Sanitized (code/message/details/hint only — never headers, tokens,
+    // or the raw error object) and terminal-only; the HTTP response stays
+    // the same generic, unsanitized-nothing "tracking_failed" it always
+    // was. See log-error.ts's own doc comment for exactly what is and
+    // isn't logged.
+    logSanitizedError("[extension:progress] request failed", err);
     return NextResponse.json({ error: "tracking_failed" }, { status: 502 });
   }
 }

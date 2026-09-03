@@ -103,19 +103,22 @@ interface StatusLine {
   /** Defaults to "tracked-ok" when omitted — see renderPageStatus. */
   className?: string;
   linkLabel?: string;
+  /** Optional second line, e.g. auto-add's one-time "Tracking automatically" under "Added to Markly". */
+  subtext?: string;
 }
 
 /**
- * `result.autoLinked` is only ever true on the exact request that just
- * created a smart auto-link (see route.ts's POST /api/extension/progress)
- * — never again for later chapters from the same now-linked source — so
- * showing a distinct "tracked automatically" line here naturally happens
+ * `result.autoLinked`/`result.autoAdded` are only ever true on the exact
+ * request that just created a smart auto-link (Stage 18) or a Stage 22
+ * auto-add — never again for later chapters from the same now-linked
+ * source — so showing a distinct one-time line here naturally happens
  * only once per source, with no extra state to track in the popup.
  */
 function statusLineFor(result: ProgressApiResult): StatusLine {
   switch (result.status) {
     case "updated":
     case "unchanged":
+      if (result.autoAdded) return { text: "✓ Added to Markly", className: "tracked-ok", subtext: "Tracking automatically" };
       return result.autoLinked
         ? { text: "✓ Tracked automatically" }
         : { text: "✓ Tracked" };
@@ -134,6 +137,13 @@ function statusLineFor(result: ProgressApiResult): StatusLine {
       return { text: "Reconnect to Markly needed", className: "muted" };
     case "low_confidence":
       return { text: "Markly couldn't confidently detect progress on this page.", className: "muted" };
+    case "server_error":
+      // Distinct from "error" below: the request reached Markly and got a
+      // real (non-2xx) response, so claiming Markly is unreachable would
+      // be wrong — it demonstrably answered. The next detection retries
+      // automatically; nothing for the user to do here.
+      return { text: "Tracking update failed", className: "muted" };
+    case "error":
     default:
       return { text: "Unable to reach Markly", className: "muted" };
   }
@@ -169,6 +179,7 @@ function renderPageStatus(state: TabState | null) {
     <p class="title">${escapeHtml(detection.sourceTitle)}</p>
     <p class="muted">${escapeHtml(formatProgress(detection.progress))}</p>
     <p class="${className}">${escapeHtml(line.text)}</p>
+    ${line.subtext ? `<p class="muted">${escapeHtml(line.subtext)}</p>` : ""}
     ${line.linkLabel ? `<button id="link-btn" type="button" class="secondary">${escapeHtml(line.linkLabel)}</button>` : ""}
   `;
 

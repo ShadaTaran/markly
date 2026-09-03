@@ -39,7 +39,18 @@ export type ProgressApiStatus =
   | "incompatible_media_type"
   | "item_not_found"
   | "unauthorized"
+  // Extension-local only, set by submitProgress itself — the fetch never
+  // completed (offline, DNS failure, Markly not running). Distinct from
+  // "server_error" below: here, nothing about Markly's own state is known
+  // one way or the other.
   | "error"
+  // Extension-local only — the request reached Markly and got a real HTTP
+  // response, but a non-2xx one (e.g. the 502 tracking_failed the server
+  // returns for an unexpected internal error). Markly *was* reachable;
+  // this specific update just didn't go through — distinct copy from
+  // "error" so the popup doesn't claim Markly is unreachable when it
+  // demonstrably just answered.
+  | "server_error"
   // Extension-local only — the server never returns this. Set by the
   // service worker when the content script ran but neither an adapter
   // nor universal detection could confidently identify progress; no API
@@ -52,8 +63,10 @@ export type NeedsLinkReason = "ambiguous" | "no_match";
 export interface ProgressApiResult {
   status: ProgressApiStatus;
   currentValue?: number;
-  /** True only on the exact request that just created a smart auto-link — never set again for later chapters from the same (now-linked) source. */
+  /** True only on the exact request that just created a smart auto-link (Stage 18) OR a Stage 22 auto-add that found an exact match once its advisory lock resolved — never set again for later chapters from the same (now-linked) source. */
   autoLinked?: boolean;
+  /** Stage 22 — true only on the exact request that just auto-created the LibraryItem itself (never re-set for later chapters). Mutually exclusive with autoLinked: a given response is never both, since a source is either newly created or newly linked to something that already existed. */
+  autoAdded?: boolean;
   reason?: NeedsLinkReason;
 }
 
@@ -71,10 +84,18 @@ export async function submitProgress(token: string, detection: TrackingDetection
       status?: ProgressApiStatus;
       currentValue?: number;
       autoLinked?: boolean;
+      autoAdded?: boolean;
       reason?: NeedsLinkReason;
     };
-    if (!response.ok || !data.status) return { status: "error" };
-    return { status: data.status, currentValue: data.currentValue, autoLinked: data.autoLinked, reason: data.reason };
+    if (!response.ok) return { status: "server_error" };
+    if (!data.status) return { status: "error" };
+    return {
+      status: data.status,
+      currentValue: data.currentValue,
+      autoLinked: data.autoLinked,
+      autoAdded: data.autoAdded,
+      reason: data.reason,
+    };
   } catch {
     return { status: "error" };
   }

@@ -11,6 +11,7 @@ export interface ExtensionDeviceRow {
   token_hash: string;
   browser: string | null;
   extension_version: string | null;
+  auto_add_enabled: boolean;
   created_at: string;
   last_seen_at: string | null;
   revoked_at: string | null;
@@ -24,6 +25,8 @@ export interface DeviceSummary {
   createdAt: string;
   lastSeenAt: string | null;
   revoked: boolean;
+  /** Stage 22 — see setAutoAddEnabled and README "Optional Zero-Touch Auto-Add". Default false; opt-in per device. */
+  autoAddEnabled: boolean;
 }
 
 function toSummary(row: ExtensionDeviceRow): DeviceSummary {
@@ -34,6 +37,7 @@ function toSummary(row: ExtensionDeviceRow): DeviceSummary {
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
     revoked: row.revoked_at !== null,
+    autoAddEnabled: row.auto_add_enabled,
   };
 }
 
@@ -91,6 +95,8 @@ export async function createDevice(
 export interface AuthenticatedDevice {
   deviceId: string;
   userId: string;
+  /** Stage 22 — read in the same lookup so the eligibility check in /api/extension/progress needs no second query. Revoking a device (which already fails this lookup entirely) is therefore also how auto-add naturally stops for it — no parallel auth path. */
+  autoAddEnabled: boolean;
 }
 
 /**
@@ -103,9 +109,9 @@ export async function authenticateDevice(admin: SupabaseClient, rawToken: string
   const tokenHash = hashSecret(rawToken);
   const { data, error } = await admin
     .from(TABLE)
-    .select("id, user_id, revoked_at")
+    .select("id, user_id, revoked_at, auto_add_enabled")
     .eq("token_hash", tokenHash)
-    .returns<{ id: string; user_id: string; revoked_at: string | null }[]>();
+    .returns<{ id: string; user_id: string; revoked_at: string | null; auto_add_enabled: boolean }[]>();
   if (error) throw error;
 
   const row = data?.[0];
@@ -113,5 +119,11 @@ export async function authenticateDevice(admin: SupabaseClient, rawToken: string
 
   await admin.from(TABLE).update({ last_seen_at: new Date().toISOString() }).eq("id", row.id);
 
-  return { deviceId: row.id, userId: row.user_id };
+  return { deviceId: row.id, userId: row.user_id, autoAddEnabled: row.auto_add_enabled };
+}
+
+/** Session-authenticated (RLS-scoped) — the one setting Stage 22 exposes; device-level, opt-in, default off (see the migration's own reasoning for why device- not account-level). */
+export async function setAutoAddEnabled(supabase: SupabaseClient, userId: string, deviceId: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase.from(TABLE).update({ auto_add_enabled: enabled }).eq("id", deviceId).eq("user_id", userId);
+  if (error) throw error;
 }

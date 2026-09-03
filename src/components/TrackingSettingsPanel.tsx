@@ -111,6 +111,31 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
     }
   }
 
+  /**
+   * Stage 22 — the single place this preference is written; the extension
+   * popup deliberately has no separate toggle/copy of it (see README
+   * "Optional Zero-Touch Auto-Add"). Optimistic like the other device rows
+   * here, reverted on failure.
+   */
+  async function toggleAutoAdd(deviceId: string, enabled: boolean) {
+    setBusy(`auto-add-${deviceId}`);
+    setError(undefined);
+    setDevices((current) => current.map((device) => (device.id === deviceId ? { ...device, autoAddEnabled: enabled } : device)));
+    try {
+      const response = await fetch("/api/extension/devices/auto-add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, enabled }),
+      });
+      if (!response.ok) throw new Error("failed");
+    } catch {
+      setDevices((current) => current.map((device) => (device.id === deviceId ? { ...device, autoAddEnabled: !enabled } : device)));
+      setError("Couldn't update that setting. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function openLinkPicker(sourceId: string) {
     setLinkingSourceId(sourceId);
     setItemFilter("");
@@ -359,39 +384,68 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
             <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Connected Devices</h3>
             <ul className="mt-2 space-y-2">
               {devices.map((device) => (
-                <li key={device.id} className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
-                  <div>
-                    <p className="text-sm text-foreground">{device.name}</p>
-                    <p className="text-xs text-muted-foreground">Last active: {formatRelative(device.lastSeenAt)}</p>
-                  </div>
-                  {revokeConfirmId === device.id ? (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => revokeDevice(device.id)}
-                        disabled={busy !== null}
-                        className="rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
-                      >
-                        {busy === `revoke-${device.id}` ? "Revoking…" : "Confirm"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRevokeConfirmId(null)}
-                        className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-                      >
-                        Cancel
-                      </button>
+                <li key={device.id} className="space-y-3 rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-foreground">{device.name}</p>
+                      <p className="text-xs text-muted-foreground">Last active: {formatRelative(device.lastSeenAt)}</p>
                     </div>
-                  ) : (
+                    {revokeConfirmId === device.id ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => revokeDevice(device.id)}
+                          disabled={busy !== null}
+                          className="rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
+                        >
+                          {busy === `revoke-${device.id}` ? "Revoking…" : "Confirm"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRevokeConfirmId(null)}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setRevokeConfirmId(device.id)}
+                        disabled={busy !== null}
+                        className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                    <div>
+                      <p className="text-xs font-medium text-foreground">Automatically add new works</p>
+                      <p className="text-xs text-muted-foreground">
+                        When Markly confidently detects something you&apos;re reading that isn&apos;t already in your library,
+                        add it and start tracking automatically.
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setRevokeConfirmId(device.id)}
+                      role="switch"
+                      aria-checked={device.autoAddEnabled}
+                      aria-label="Automatically add new works"
+                      onClick={() => toggleAutoAdd(device.id, !device.autoAddEnabled)}
                       disabled={busy !== null}
-                      className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
+                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
+                        device.autoAddEnabled ? "bg-accent" : "bg-border"
+                      }`}
                     >
-                      Revoke
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
+                          device.autoAddEnabled ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
                     </button>
-                  )}
+                  </div>
                 </li>
               ))}
             </ul>

@@ -128,7 +128,11 @@ async function handleDetection(detection: TrackingDetection | null, tabId: numbe
     // The device was revoked or its token is otherwise no longer valid —
     // stop trying with it until the user re-pairs.
     await clearDeviceToken();
-  } else if (result.status !== "error") {
+  } else if (result.status !== "error" && result.status !== "server_error") {
+    // Neither a failed fetch ("error") nor a real non-2xx response from
+    // Markly ("server_error") is remembered as "already sent" — both mean
+    // this value was never actually recorded, so the next opportunity to
+    // detect the same value must retry rather than silently skip it.
     lastSentValue.set(key, detection.progress.value);
   }
 

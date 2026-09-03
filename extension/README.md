@@ -90,6 +90,35 @@ table server-side. Revoking a site's permission stops detection outright
 any existing `tracking_sources` row, which stays linked and simply stops
 receiving new detections until the site is re-enabled.
 
+## Optional zero-touch auto-add (Stage 22)
+
+`src/popup/popup.ts`'s `statusLineFor()` distinguishes three cases for an
+otherwise-identical `updated`/`unchanged` API response, using two flags the
+server sets at most once per source (see repo-root README "Optional
+Zero-Touch Auto-Add" for the full server-side design):
+
+- `autoAdded: true` — this exact request just auto-created the LibraryItem.
+  Shows "✓ Added to Markly" plus a "Tracking automatically" subline.
+- `autoLinked: true` — this exact request just linked to an *existing*
+  item (Stage 18's smart-auto-link, or Stage 22's advisory-lock recheck
+  finding one). Shows "✓ Tracked automatically", no subline.
+- Neither flag — an already-linked source's routine update. Shows
+  "✓ Tracked".
+
+Both flags are one-time by construction (the server only ever sets them on
+the literal request that changed something), so the popup needs no extra
+state of its own to avoid repeating "Added to Markly" on every later
+chapter — the same request-scoped pattern `autoLinked` already used before
+this stage.
+
+The "Automatically add new works" preference itself has **no popup UI** —
+it's set only from Settings → Auto Tracking on the web, per device. This
+was a deliberate choice, not an oversight: the per-source
+`auto_track_enabled` toggle already established that precedent (web-only),
+and a second toggle surface for the same rarely-changed boolean would only
+risk it drifting out of sync with the persisted value — see the root
+README for the reasoning.
+
 ## Build
 
 From the repo root:
