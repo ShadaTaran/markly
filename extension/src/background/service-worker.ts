@@ -18,8 +18,21 @@ chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch
 /** Per-tab last-known detection + API result, so the popup can show "current page" status without re-injecting anything. Cleared when a tab navigates to a non-matching page or closes. */
 const tabState = new Map<number, TabState>();
 
-/** Lightweight extension-side dedup: skip re-submitting a value we just sent for this exact source. The server is still authoritative (see /api/extension/progress) — this only avoids a redundant round trip on reload/DOM-mutation/service-worker-wakeup repeats. */
-const lastSentValue = new Map<string, number>();
+/**
+ * Lightweight extension-side dedup, split into two independent caches
+ * since Stage 24: `lastCommittedValue` tracks the last value actually
+ * *committed* as progress (commit: true — every reading-media detection,
+ * plus a video's eventual completion send); `lastDiscoveredValue` tracks
+ * the last value sent as a discovery-only ping (commit: false — a video
+ * "episode detected" ping, which never commits anything). Keeping these
+ * separate matters: a discovery ping for episode 7 must never suppress
+ * the *later, real* completion send for episode 7 just because the same
+ * numeric value was already mentioned once. The server is still
+ * authoritative either way (see /api/extension/progress) — this only
+ * avoids redundant round trips on reload/SPA-re-detection repeats.
+ */
+const lastCommittedValue = new Map<string, number>();
+const lastDiscoveredValue = new Map<string, number>();
 
 function dedupeKey(adapterId: string, sourceKey: string): string {
   return `${adapterId}::${sourceKey}`;
@@ -68,8 +81,37 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   switch (message.type) {
     case "TRACKING_DETECTED": {
       const tabId = sender.tab?.id;
-      handleDetection(message.detection, tabId).then(sendResponse);
+      handleDetection(message.detection, tabId, message.commit ?? true).then(sendResponse);
       return true; // keep the message channel open for the async response
+    }
+    case "WATCH_PROGRESS_UPDATE": {
+      // Stage 24 — purely local: updates this tab's cached state so the
+      // popup can show a live watch percentage on demand (GET_TAB_STATUS),
+      // without a network round trip and without this ever reaching
+      // Markly. No response needed — the content script doesn't wait for one.
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined) {
+        const current = tabState.get(tabId);
+        // A ratio update only ever arrives once a player is actually
+        // observed — clears any stale "searching" state defensively, even
+        // though PLAYER_STATUS_UPDATE("found") already should have.
+        if (current) tabState.set(tabId, { ...current, watchRatio: message.ratio, playerStatus: undefined });
+      }
+      return false;
+    }
+    case "PLAYER_STATUS_UPDATE": {
+      // Stage 24 bugfix — purely local, same reasoning as WATCH_PROGRESS_UPDATE above.
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined) {
+        const current = tabState.get(tabId);
+        if (current) {
+          tabState.set(tabId, {
+            ...current,
+            playerStatus: message.status === "found" ? undefined : message.status,
+          });
+        }
+      }
+      return false;
     }
     case "GET_TAB_STATUS": {
       sendResponse(tabState.get(message.tabId) ?? null);
@@ -96,7 +138,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 });
 
-async function handleDetection(detection: TrackingDetection | null, tabId: number | undefined): Promise<ProgressApiResult> {
+async function handleDetection(
+  detection: TrackingDetection | null,
+  tabId: number | undefined,
+  commit: boolean,
+): Promise<ProgressApiResult> {
   if (!detection) {
     // The content script ran (the page was in scope) but nothing was
     // confidently detected — purely local state for the popup; never
@@ -107,11 +153,13 @@ async function handleDetection(detection: TrackingDetection | null, tabId: numbe
   }
 
   const key = dedupeKey(detection.adapterId, detection.sourceKey);
+  const cache = commit ? lastCommittedValue : lastDiscoveredValue;
 
-  if (lastSentValue.get(key) === detection.progress.value) {
+  if (cache.get(key) === detection.progress.value) {
     const cached = tabId !== undefined ? tabState.get(tabId) : undefined;
-    const result: ProgressApiResult = cached?.result ?? { status: "unchanged", currentValue: detection.progress.value };
-    if (tabId !== undefined) tabState.set(tabId, { detection, result });
+    const result: ProgressApiResult =
+      cached?.result ?? (commit ? { status: "unchanged", currentValue: detection.progress.value } : { status: "detected" });
+    if (tabId !== undefined) tabState.set(tabId, { detection, result, watchRatio: cached?.watchRatio });
     return result;
   }
 
@@ -122,7 +170,7 @@ async function handleDetection(detection: TrackingDetection | null, tabId: numbe
     return result;
   }
 
-  const result = await submitProgress(token, detection);
+  const result = await submitProgress(token, detection, commit);
 
   if (result.status === "unauthorized") {
     // The device was revoked or its token is otherwise no longer valid —
@@ -133,10 +181,15 @@ async function handleDetection(detection: TrackingDetection | null, tabId: numbe
     // Markly ("server_error") is remembered as "already sent" — both mean
     // this value was never actually recorded, so the next opportunity to
     // detect the same value must retry rather than silently skip it.
-    lastSentValue.set(key, detection.progress.value);
+    cache.set(key, detection.progress.value);
   }
 
-  if (tabId !== undefined) tabState.set(tabId, { detection, result });
+  // Once progress actually commits, the local watch-ratio bar no longer
+  // means anything (the popup switches to "tracked" copy instead) — clear
+  // it. A discovery-only send keeps whatever ratio local playback
+  // observation has already reported for this tab.
+  const previousWatchRatio = tabId !== undefined ? tabState.get(tabId)?.watchRatio : undefined;
+  if (tabId !== undefined) tabState.set(tabId, { detection, result, watchRatio: commit ? undefined : previousWatchRatio });
   return result;
 }
 

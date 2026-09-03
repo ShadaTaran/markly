@@ -18,6 +18,43 @@ import type { ProgressApiResult } from "../lib/api";
 export interface TrackingDetectedMessage {
   type: "TRACKING_DETECTED";
   detection: TrackingDetection | null;
+  /**
+   * Stage 24 — false only for a video "episode detected, not yet watched
+   * enough" discovery ping (see tracking/video/completion.ts and README
+   * "Episode/Video Tracking"). Absent or true means "commit this value as
+   * progress immediately," the unchanged behavior every reading-media
+   * (chapter-kind) detection has always used since Stage 18.
+   */
+  commit?: boolean;
+}
+
+/**
+ * Stage 24 — content-script-to-service-worker only, purely local: the
+ * current watch ratio (0-1) for an episode still being observed, so the
+ * popup can show a live "Watching · N%" without any network request to
+ * Markly. Never forwarded to the API; see completion.ts's own doc comment
+ * for exactly what this is and isn't used for.
+ */
+export interface WatchProgressUpdateMessage {
+  type: "WATCH_PROGRESS_UPDATE";
+  sourceKey: string;
+  ratio: number;
+}
+
+/**
+ * Stage 24 bugfix — content-script-to-service-worker only, purely local:
+ * reports the state of the bounded, event-driven search for a primary
+ * video (tracking/video/completion.ts's discoverPrimaryVideo) so the
+ * popup can show a brief "Finding video player…" during a normal async-
+ * mount settling window, distinct from the final "completion tracking
+ * unavailable" it should show only once that search has genuinely timed
+ * out. "found" clears the searching state immediately, without waiting
+ * for the first (throttled, ~1s) WATCH_PROGRESS_UPDATE to arrive.
+ */
+export interface PlayerStatusUpdateMessage {
+  type: "PLAYER_STATUS_UPDATE";
+  sourceKey: string;
+  status: "searching" | "unavailable" | "found";
 }
 
 export interface GetTabStatusMessage {
@@ -46,6 +83,8 @@ export interface InjectNowMessage {
 
 export type ExtensionMessage =
   | TrackingDetectedMessage
+  | WatchProgressUpdateMessage
+  | PlayerStatusUpdateMessage
   | GetTabStatusMessage
   | ConnectMessage
   | DisconnectMessage
@@ -55,4 +94,8 @@ export type ExtensionMessage =
 export interface TabState {
   detection: TrackingDetection | null;
   result: ProgressApiResult;
+  /** Stage 24 — local-only current watch ratio (0-1) for an episode-kind detection still being observed; never sent to Markly, and absent once completion has been sent or for non-video detections. */
+  watchRatio?: number;
+  /** Stage 24 bugfix — "searching" during the bounded player-discovery window, "unavailable" once it's genuinely exhausted. Absent once a video is found (watchRatio takes over) or for non-video detections. */
+  playerStatus?: "searching" | "unavailable";
 }

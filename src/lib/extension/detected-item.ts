@@ -63,12 +63,21 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
     catalogSource: undefined,
   };
   const progress = source.lastDetectedProgress;
+  // Stage 24: opening an episode's page is identification, not proof of
+  // having watched it — unlike a chapter, where reading the page *is* the
+  // progress. A discovery-only detection (confirmed === false, set only
+  // by the video completion-observer's initial "episode detected" ping —
+  // see README "Episode/Video Tracking") never bakes an unwatched episode
+  // number into a newly created item; committed progress only ever
+  // arrives later, through the normal monotonic progress endpoint once
+  // the completion threshold is actually reached.
+  const confirmedEpisode = progress?.kind === "episode" && progress.confirmed !== false ? progress.value : undefined;
 
   switch (source.mediaType) {
     case "anime":
       return {
         ...common,
-        currentEpisode: progress?.kind === "episode" ? progress.value : undefined,
+        currentEpisode: confirmedEpisode,
         totalEpisodes: undefined,
         genres: metadata?.genres,
         studio: undefined,
@@ -76,7 +85,7 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
     case "series":
       return {
         ...common,
-        currentEpisode: progress?.kind === "episode" ? progress.value : undefined,
+        currentEpisode: confirmedEpisode,
         totalEpisodes: undefined,
         genres: metadata?.genres,
       };

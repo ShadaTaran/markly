@@ -21,6 +21,15 @@ interface ProgressRequestBody {
   mediaType?: string;
   progress?: { kind?: string; value?: number };
   detectedMetadata?: unknown;
+  /**
+   * Stage 24 — false only for a video "episode detected" discovery ping:
+   * establishes source identity / Smart Auto-Link / Auto-Add, but never
+   * commits the detected value as progress. Any value other than the
+   * literal boolean `false` (including absent, or a malformed non-
+   * boolean) is treated as `true` — the existing, unchanged behavior
+   * every reading-media detection has always relied on.
+   */
+  commitProgress?: unknown;
 }
 
 function isMediaType(value: string | undefined): value is MediaItem["type"] {
@@ -64,6 +73,7 @@ export async function POST(request: Request) {
   // here regardless of what shape it arrived in. Absent/invalid is not an
   // error; it just means no enrichment happens for this request.
   const detectedMetadata = parseDetectedMetadata(body.detectedMetadata);
+  const commitProgress = body.commitProgress !== false;
 
   if (
     !adapterId ||
@@ -87,6 +97,7 @@ export async function POST(request: Request) {
       sourceUrl,
       mediaType,
       progress: { kind: progressKind, value: progressValue },
+      ...(!commitProgress && { confirmed: false }),
       ...(detectedMetadata && { detectedMetadata }),
     });
 
@@ -126,7 +137,12 @@ export async function POST(request: Request) {
           mediaType,
           libraryItemId: null,
           autoTrackEnabled: true,
-          lastDetectedProgress: { kind: progressKind, value: progressValue },
+          // confirmed: false here is what stops buildDetectedMediaInput
+          // (called inside attemptAutoAdd) from baking an unwatched
+          // episode number into the item this creates — see its own doc
+          // comment. Harmless/no-op for a chapter-kind detection, which
+          // never checks this flag at all.
+          lastDetectedProgress: { kind: progressKind, value: progressValue, ...(!commitProgress && { confirmed: false }) },
           ...(detectedMetadata && { lastDetectedMetadata: detectedMetadata }),
           lastSeenAt: new Date().toISOString(),
         };
@@ -145,6 +161,25 @@ export async function POST(request: Request) {
       if (!libraryItemId) {
         return NextResponse.json({ status: "needs_link", reason: outcome.kind === "ambiguous" ? "ambiguous" : "no_match" });
       }
+    }
+
+    // Stage 24 — a video "episode detected" discovery ping: identity is
+    // established (recordDetection above, plus Smart Auto-Link/Auto-Add
+    // just above), but the detected value is deliberately never committed
+    // as progress. Enrichment still runs (metadata isn't progress, and is
+    // always safe/best-effort regardless); applyDetectionToItem — the one
+    // function that actually writes to currentEpisode/currentChapter/etc.
+    // and inserts Activity — is skipped entirely. The eventual completion
+    // event is just a normal commitProgress-true request through this
+    // same route, reusing 100% of the existing monotonic-progress path
+    // below unchanged.
+    if (!commitProgress) {
+      await enrichLibraryItemIfSparse(admin, device.userId, libraryItemId, mediaType, detectedMetadata).catch(() => undefined);
+      return NextResponse.json({
+        status: "detected",
+        ...(autoLinked ? { autoLinked: true } : {}),
+        ...(autoAdded ? { autoAdded: true } : {}),
+      });
     }
 
     // The read, the compare, the write, and the Activity insert(s) all

@@ -1,7 +1,6 @@
 import { MARKLY_BASE_URL } from "../lib/config";
 import { hasOriginPermission, requestOriginPermission } from "../lib/site-permissions";
 import type { ExtensionMessage, TabState } from "../types/messages";
-import type { ProgressApiResult } from "../lib/api";
 
 const MARKLY_ORIGIN = new URL(MARKLY_BASE_URL).origin;
 
@@ -107,21 +106,66 @@ interface StatusLine {
   subtext?: string;
 }
 
+function formatPercent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
+}
+
 /**
  * `result.autoLinked`/`result.autoAdded` are only ever true on the exact
  * request that just created a smart auto-link (Stage 18) or a Stage 22
  * auto-add — never again for later chapters from the same now-linked
  * source — so showing a distinct one-time line here naturally happens
  * only once per source, with no extra state to track in the popup.
+ *
+ * Stage 24 — takes the full TabState (not just the API result) because an
+ * episode-kind ("video") detection needs a few more locally-known things
+ * the result alone doesn't carry: `watchRatio` (this tab's current local
+ * watch percentage — never sent to Markly, see completion.ts),
+ * `playerStatus` (mid-search vs. genuinely exhausted — see the bugfix note
+ * below), and `detection.progress.kind`, to phrase completion as "Episode
+ * tracked" rather than the generic "Tracked" chapter-kind media uses.
  */
-function statusLineFor(result: ProgressApiResult): StatusLine {
+function statusLineFor(state: TabState): StatusLine {
+  const { detection, result, watchRatio, playerStatus } = state;
+  const isEpisode = detection?.progress.kind === "episode";
+
   switch (result.status) {
+    case "detected": {
+      // Stage 24 — a video discovery-only ping succeeded: identity
+      // established (and possibly auto-linked/auto-added), but not
+      // enough has been watched yet to commit progress.
+      const addedPrefix = result.autoAdded ? "✓ Added to Markly" : undefined;
+      if (watchRatio !== undefined) {
+        const watching = `Watching · ${formatPercent(watchRatio)}`;
+        return addedPrefix
+          ? { text: addedPrefix, className: "tracked-ok", subtext: watching }
+          : { text: watching, className: "muted" };
+      }
+      // Bugfix — distinguishes a normal, brief async-player-mount settling
+      // window (playerStatus: "searching") from a genuinely exhausted
+      // search (playerStatus: "unavailable", or absent for an older cached
+      // state) — a real player that just hasn't rendered yet must never
+      // look identical to one that structurally can't be observed at all
+      // (see tracking/video/completion.ts's discoverPrimaryVideo).
+      const subtext =
+        playerStatus === "searching" ? "Finding video player…" : "Automatic completion tracking unavailable on this player.";
+      return addedPrefix
+        ? { text: addedPrefix, className: "tracked-ok", subtext }
+        : { text: "Episode detected", className: "muted", subtext };
+    }
     case "updated":
     case "unchanged":
-      if (result.autoAdded) return { text: "✓ Added to Markly", className: "tracked-ok", subtext: "Tracking automatically" };
-      return result.autoLinked
-        ? { text: "✓ Tracked automatically" }
-        : { text: "✓ Tracked" };
+      if (result.autoAdded) {
+        return {
+          text: "✓ Added to Markly",
+          className: "tracked-ok",
+          subtext: isEpisode ? "Episode tracked" : "Tracking automatically",
+        };
+      }
+      if (result.autoLinked) {
+        return { text: isEpisode ? "✓ Episode tracked automatically" : "✓ Tracked automatically" };
+      }
+      return { text: isEpisode ? "✓ Episode tracked" : "✓ Tracked" };
     case "behind_current_progress":
       return { text: "Already further along in Markly", className: "muted" };
     case "needs_link":
@@ -158,7 +202,7 @@ function renderPageStatus(state: TabState | null) {
     return;
   }
 
-  const { detection, result } = state;
+  const { detection } = state;
 
   if (!detection) {
     // The content script ran but neither an adapter nor universal
@@ -166,13 +210,13 @@ function renderPageStatus(state: TabState | null) {
     // "unsupported page" (state above), which means the script never ran
     // at all.
     statusEl.innerHTML = `
-      <p class="muted">${escapeHtml(statusLineFor(result).text)}</p>
+      <p class="muted">${escapeHtml(statusLineFor(state).text)}</p>
       <p class="muted">No automatic update.</p>
     `;
     return;
   }
 
-  const line = statusLineFor(result);
+  const line = statusLineFor(state);
   const className = line.className ?? "tracked-ok";
 
   statusEl.innerHTML = `

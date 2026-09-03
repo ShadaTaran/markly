@@ -285,6 +285,29 @@ any future site:
   Router-based reader; benefits any other client-side-routed site for
   free, with no site-specific code.
 
+## Episode/video tracking (Stage 24)
+
+`src/tracking/video/completion.ts` is the one place completion-threshold
+logic lives — primary-video selection and the watch-completion observer
+are both fully generic; no adapter ever implements its own version of
+either. An episode-kind (`progress.kind === "episode"`) detection in
+`content-script.ts` sends an immediate discovery ping
+(`TRACKING_DETECTED` with `commit: false` — establishes identity/Smart
+Auto-Link/Auto-Add without committing progress) and then, only if a
+confident primary `<video>` can be found, attaches a completion observer;
+its `onComplete` callback sends a second, ordinary `commit: true`
+detection once eligible. See the root README's "Episode/Video Tracking"
+section for the full completion policy, the real Crunchyroll
+investigation (concluding no dedicated adapter — the player is
+inaccessible without login regardless of title-parsing), and the
+`/dev/video-test/episode-N` harness.
+
+The service worker's dedup (`background/service-worker.ts`) is split into
+two independent caches for this reason: a discovery ping and its eventual
+completion carry the *same* episode number, and conflating "already
+mentioned this value" with "already committed this value" would let a
+discovery ping silently swallow the real completion send.
+
 ## Security notes for contributors
 
 - The device token lives only in `chrome.storage.local`, restricted to

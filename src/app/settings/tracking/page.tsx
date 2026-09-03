@@ -54,7 +54,9 @@ export default async function TrackingPage() {
           mediaType: row.media_type,
           libraryItemId: row.library_item_id,
           autoTrackEnabled: row.auto_track_enabled,
-          lastDetectedProgress: row.last_detected_progress ? { kind: row.last_detected_progress.kind, value: row.last_detected_progress.value } : null,
+          lastDetectedProgress: row.last_detected_progress
+            ? { kind: row.last_detected_progress.kind, value: row.last_detected_progress.value, confirmed: row.last_detected_progress.confirmed }
+            : null,
           lastDetectedMetadata: row.last_detected_progress?.metadata,
           lastSeenAt: row.last_seen_at,
         }))}

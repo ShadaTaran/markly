@@ -39,6 +39,10 @@ export type ProgressApiStatus =
   | "incompatible_media_type"
   | "item_not_found"
   | "unauthorized"
+  // Stage 24 — a discovery-only (commitProgress: false) request succeeded:
+  // identity/Smart Auto-Link/Auto-Add ran, but no progress was committed.
+  // The server never returns this for a commitProgress-true request.
+  | "detected"
   // Extension-local only, set by submitProgress itself — the fetch never
   // completed (offline, DNS failure, Markly not running). Distinct from
   // "server_error" below: here, nothing about Markly's own state is known
@@ -70,12 +74,13 @@ export interface ProgressApiResult {
   reason?: NeedsLinkReason;
 }
 
-export async function submitProgress(token: string, detection: TrackingDetection): Promise<ProgressApiResult> {
+/** `commit` defaults to true — every reading-media (chapter-kind) call site omits it entirely, unchanged since Stage 18. Only the video completion-observer ever passes `false` (see content-script.ts). */
+export async function submitProgress(token: string, detection: TrackingDetection, commit = true): Promise<ProgressApiResult> {
   try {
     const response = await fetch(`${MARKLY_BASE_URL}/api/extension/progress`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(detection),
+      body: JSON.stringify({ ...detection, commitProgress: commit }),
     });
 
     if (response.status === 401) return { status: "unauthorized" };

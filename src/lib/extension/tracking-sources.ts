@@ -19,6 +19,18 @@ export interface StoredDetectionProgress {
   kind: string;
   value: number;
   metadata?: DetectedMetadata;
+  /**
+   * Stage 24 — false only for a video "episode detected, not yet watched
+   * enough" discovery ping (see /api/extension/progress's `commitProgress`
+   * handling and README "Episode/Video Tracking"). Absent (the default for
+   * every reading-media detection, unchanged since Stage 18) or true means
+   * this value represents genuinely committed/immediate progress — reading
+   * a chapter *is* progress, but merely opening a video episode's page is
+   * not. buildDetectedMediaInput (src/lib/extension/detected-item.ts)
+   * checks this before baking a detected episode number into a newly
+   * created LibraryItem.
+   */
+  confirmed?: boolean;
 }
 
 export interface TrackingSourceRow {
@@ -45,6 +57,8 @@ export interface DetectionInput {
   mediaType: MediaItem["type"];
   progress: { kind: string; value: number };
   detectedMetadata?: DetectedMetadata;
+  /** Stage 24 — see StoredDetectionProgress.confirmed. Only ever passed as `false` by the video discovery path; every other caller omits it (defaults to confirmed). */
+  confirmed?: boolean;
 }
 
 /**
@@ -69,7 +83,11 @@ export async function recordDetection(admin: SupabaseClient, userId: string, inp
         source_title: input.sourceTitle,
         source_url: input.sourceUrl,
         media_type: input.mediaType,
-        last_detected_progress: { ...input.progress, ...(input.detectedMetadata && { metadata: input.detectedMetadata }) },
+        last_detected_progress: {
+          ...input.progress,
+          ...(input.confirmed === false && { confirmed: false }),
+          ...(input.detectedMetadata && { metadata: input.detectedMetadata }),
+        },
         last_seen_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
