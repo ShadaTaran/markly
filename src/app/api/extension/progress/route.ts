@@ -4,7 +4,7 @@ import { authenticateDevice } from "@/lib/extension/devices";
 import { getSourceByKey, recordDetection, claimSourceLink, clearBrokenLink } from "@/lib/extension/tracking-sources";
 import { attemptSmartAutoLink } from "@/lib/extension/auto-link";
 import { attemptAutoAdd } from "@/lib/extension/auto-add";
-import { applyDetectionToItem } from "@/lib/extension/progress";
+import { applyDetectionToItem, applySeasonEpisodeProgress } from "@/lib/extension/progress";
 import { parseDetectedMetadata } from "@/lib/extension/detected-metadata";
 import { enrichLibraryItemIfSparse } from "@/lib/extension/enrichment";
 import { logSanitizedError } from "@/lib/extension/log-error";
@@ -13,13 +13,18 @@ import type { TrackingSourceSummary } from "@/lib/extension/types";
 
 const TRACKABLE_TYPES: readonly MediaItem["type"][] = ["anime", "manga", "novel", "game", "movie", "series"];
 
+/** Stage 25 — sensible upper bounds for a season-aware detection's numbers, matching the same bounds enforced inside apply_extension_season_episode_progress (0007). Never trust the extension's own bounds — re-validated from scratch here regardless of what shape the request arrived in. */
+const MAX_SEASON = 999;
+const MAX_EPISODE = 99999;
+
 interface ProgressRequestBody {
   adapterId?: string;
   sourceKey?: string;
   sourceUrl?: string | null;
   sourceTitle?: string;
   mediaType?: string;
-  progress?: { kind?: string; value?: number };
+  /** Stage 25 — `season` is only ever meaningful when kind === "season_episode"; every other kind must omit it (see the validation below). */
+  progress?: { kind?: string; value?: number; season?: number };
   detectedMetadata?: unknown;
   /**
    * Stage 24 — false only for a video "episode detected" discovery ping:
@@ -69,6 +74,8 @@ export async function POST(request: Request) {
   const mediaType = body.mediaType;
   const progressKind = typeof body.progress?.kind === "string" ? body.progress.kind : "";
   const progressValue = typeof body.progress?.value === "number" ? body.progress.value : NaN;
+  const seasonRaw = body.progress?.season;
+  const season = typeof seasonRaw === "number" ? seasonRaw : undefined;
   // Never trust the extension's own bounds — re-validated from scratch
   // here regardless of what shape it arrived in. Absent/invalid is not an
   // error; it just means no enrichment happens for this request.
@@ -87,6 +94,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
+  // Stage 25 — `season` only ever means something for a "season_episode"
+  // detection: required and strictly bounded there (an unparseable or
+  // out-of-range episode/season is rejected outright, never silently
+  // coerced or committed — see README "Season-Aware Episode Tracking"),
+  // and rejected as invalid for every other kind rather than silently
+  // ignored, so a malformed request never gets partial/ambiguous handling.
+  if (progressKind === "season_episode") {
+    if (
+      season === undefined ||
+      !Number.isInteger(season) ||
+      season < 1 ||
+      season > MAX_SEASON ||
+      !Number.isInteger(progressValue) ||
+      progressValue < 1 ||
+      progressValue > MAX_EPISODE
+    ) {
+      return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+    }
+  } else if (season !== undefined) {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
   try {
     const existing = await getSourceByKey(admin, device.userId, adapterId, sourceKey);
 
@@ -96,7 +125,7 @@ export async function POST(request: Request) {
       sourceTitle,
       sourceUrl,
       mediaType,
-      progress: { kind: progressKind, value: progressValue },
+      progress: { kind: progressKind, value: progressValue, ...(season !== undefined && { season }) },
       ...(!commitProgress && { confirmed: false }),
       ...(detectedMetadata && { detectedMetadata }),
     });
@@ -142,7 +171,12 @@ export async function POST(request: Request) {
           // episode number into the item this creates — see its own doc
           // comment. Harmless/no-op for a chapter-kind detection, which
           // never checks this flag at all.
-          lastDetectedProgress: { kind: progressKind, value: progressValue, ...(!commitProgress && { confirmed: false }) },
+          lastDetectedProgress: {
+            kind: progressKind,
+            value: progressValue,
+            ...(season !== undefined && { season }),
+            ...(!commitProgress && { confirmed: false }),
+          },
           ...(detectedMetadata && { lastDetectedMetadata: detectedMetadata }),
           lastSeenAt: new Date().toISOString(),
         };
@@ -177,6 +211,38 @@ export async function POST(request: Request) {
       await enrichLibraryItemIfSparse(admin, device.userId, libraryItemId, mediaType, detectedMetadata).catch(() => undefined);
       return NextResponse.json({
         status: "detected",
+        ...(autoLinked ? { autoLinked: true } : {}),
+        ...(autoAdded ? { autoAdded: true } : {}),
+      });
+    }
+
+    // Stage 25 — a season-aware detection commits through its own atomic
+    // RPC (lexicographic season+episode compare-and-set — see
+    // lib/extension/progress.ts / migrations/0007), kept as a fully
+    // separate branch from the numeric path below rather than folded into
+    // it, so the well-established absolute/chapter/page/percent/playtime
+    // path (unchanged since Stage 18) can't be perturbed by this addition.
+    if (progressKind === "season_episode") {
+      // Unreachable in practice — the validation block above already
+      // rejected any season_episode request with an undefined season — but
+      // narrowed explicitly here rather than asserted, so this stays a
+      // real type guard instead of a trust-me annotation.
+      if (season === undefined) {
+        return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+      }
+      const result = await applySeasonEpisodeProgress(admin, device.userId, libraryItemId, mediaType, season, progressValue);
+
+      if (result.status === "item_not_found") {
+        await clearBrokenLink(admin, detected.id);
+        return NextResponse.json({ status: "needs_link", reason: "no_match" });
+      }
+
+      await enrichLibraryItemIfSparse(admin, device.userId, libraryItemId, mediaType, detectedMetadata).catch(() => undefined);
+
+      return NextResponse.json({
+        status: result.status,
+        currentSeason: result.currentSeason,
+        currentEpisode: result.currentEpisode,
         ...(autoLinked ? { autoLinked: true } : {}),
         ...(autoAdded ? { autoAdded: true } : {}),
       });

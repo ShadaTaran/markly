@@ -308,6 +308,36 @@ completion carry the *same* episode number, and conflating "already
 mentioned this value" with "already committed this value" would let a
 discovery ping silently swallow the real completion send.
 
+## Season-aware episode tracking (Stage 25)
+
+A season transition (S1E12 → S2E1) drops the raw episode number, which the
+Stage 18/24 numeric compare-and-set can't tell apart from real regression.
+`TrackingProgress` gains an optional `season?: number`, read only when
+`progress.kind === "season_episode"` — every other kind (including plain
+`"episode"`) never sets it, so this widens the existing wire shape rather
+than replacing it; every kind/value-only consumer written before Stage 25
+(`formatProgress` in `popup.ts`, the service worker's dedup) keeps
+compiling and working unchanged.
+
+`isEpisodeProgressKind()` (`adapters/types.ts`) is `true` for both
+`"episode"` and `"season_episode"` — `content-script.ts`'s episode-vs-
+chapter branch, and the video completion pipeline it gates, apply
+identically to both; only how the *value* is interpreted server-side
+differs (see the root README's "Season-Aware Episode Tracking" for the
+database-side lexicographic comparison). The active-observer/discovery
+identity key is now season-qualified (`s2e3` vs. plain `3`) so a season
+transition to the same in-season episode number as a prior season is never
+mistaken for "still watching the same episode" and left un-reset.
+
+`markly-season-test.ts` is a new, permanent, narrowly-scoped adapter
+(matches only Markly's own dev origin, mirroring `markly-test-reader.ts`'s
+role) that reads `/dev/video-test/show/season-N/episode-M` and emits a
+`{kind: "season_episode", season, episode}` detection — proving the wire
+shape and the atomic seasonal RPC without a real streaming provider, which
+this stage deliberately doesn't add (no generic season parsing was added
+to universal detection either — no real-world evidence backs a generic
+season URL/heading shape the way Stage 23's chapter/episode patterns had).
+
 ## Security notes for contributors
 
 - The device token lives only in `chrome.storage.local`, restricted to

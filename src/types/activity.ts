@@ -1,7 +1,7 @@
 import type { TrackingStatus } from "@/types/library-item";
 
-/** What kind of progress a progress_updated event refers to — matches the personal tracking model per type. */
-export type ProgressKind = "episode" | "chapter" | "page" | "percent" | "playtime";
+/** What kind of progress a progress_updated event refers to — matches the personal tracking model per type. "season_episode" is Stage 25's season-relative variant of "episode" — see ProgressActivityEvent.previousSeason/newSeason. */
+export type ProgressKind = "episode" | "chapter" | "page" | "percent" | "playtime" | "season_episode";
 
 interface BaseActivityEvent {
   id: string;
@@ -17,6 +17,9 @@ export interface ProgressActivityEvent extends BaseActivityEvent {
   progressKind: ProgressKind;
   previousValue?: number;
   newValue: number;
+  /** Only present when progressKind === "season_episode" — the season previousValue/newValue's episode number belongs to. Every other progressKind never sets these. */
+  previousSeason?: number;
+  newSeason?: number;
   source?: ActivitySource;
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import type { MediaItem, MediaItemInput, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
+import type { EpisodeNumbering, MediaItem, MediaItemInput, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
 import { ITEM_TYPE_LABELS, NOVEL_READING_FORMAT_LABELS } from "@/types/library-item";
 import { cn, parseCommaList, parseTags } from "@/lib/utils";
 import { isValidUrl, normalizeUrl } from "@/lib/website";
@@ -27,6 +27,9 @@ export interface DetectedPrefill extends Partial<PersonalTrackingValues> {
   description?: string;
   authors?: string[];
   genres?: string[];
+  /** Stage 25 — present only for a season-aware anime/series detection; see lib/extension/detected-item.ts's buildDetectedTrackingValues. */
+  episodeNumbering?: EpisodeNumbering;
+  currentSeason?: number;
 }
 
 interface MediaItemFormProps {
@@ -52,6 +55,8 @@ interface FormState {
   status: string;
   currentEpisode: string;
   totalEpisodes: string;
+  episodeNumbering: string;
+  currentSeason: string;
   currentChapter: string;
   totalChapters: string;
   progressValue: string;
@@ -73,6 +78,7 @@ type FormErrors = Partial<
     | "rating"
     | "currentEpisode"
     | "totalEpisodes"
+    | "currentSeason"
     | "currentChapter"
     | "totalChapters"
     | "progressValue"
@@ -107,6 +113,18 @@ function toFormState(type: MediaItem["type"], item?: MediaItem, prefill?: Metada
         ? String(item.totalEpisodes)
         : !item && (type === "anime" || type === "series") && prefill?.totalEpisodes !== undefined
           ? String(prefill.totalEpisodes)
+          : "",
+    episodeNumbering:
+      item && (item.type === "anime" || item.type === "series")
+        ? (item.episodeNumbering ?? "absolute")
+        : !item && (type === "anime" || type === "series") && detected?.episodeNumbering
+          ? detected.episodeNumbering
+          : "absolute",
+    currentSeason:
+      item && (item.type === "anime" || item.type === "series") && item.currentSeason !== undefined
+        ? String(item.currentSeason)
+        : !item && (type === "anime" || type === "series") && detected?.currentSeason !== undefined
+          ? String(detected.currentSeason)
           : "",
     currentChapter:
       item && item.type === "manga" && item.currentChapter !== undefined
@@ -242,11 +260,13 @@ export function MediaItemForm({
     };
 
     if (type === "anime" || type === "series") {
+      const isSeasonal = values.episodeNumbering === "seasonal";
       const current = parseCount(values.currentEpisode, "Current episode");
       const total = parseCount(values.totalEpisodes, "Total episodes", { positive: true });
       if (current.error) nextErrors.currentEpisode = current.error;
       if (total.error) nextErrors.totalEpisodes = total.error;
       if (
+        !isSeasonal &&
         !current.error &&
         !total.error &&
         current.value !== undefined &&
@@ -256,16 +276,33 @@ export function MediaItemForm({
         nextErrors.currentEpisode = "Current episode can't exceed total episodes.";
       }
 
+      let season: number | undefined;
+      if (isSeasonal) {
+        const parsedSeason = parseCount(values.currentSeason, "Season", { positive: true });
+        if (parsedSeason.error) nextErrors.currentSeason = parsedSeason.error;
+        else if (parsedSeason.value === undefined) nextErrors.currentSeason = "Season is required for season-based numbering.";
+        season = parsedSeason.value;
+      }
+
       if (Object.keys(nextErrors).length > 0) {
         setErrors(nextErrors);
         return;
       }
+
+      // Switching back to "Absolute episodes" is an explicit, visible save
+      // action, not a silent reinterpretation — episodeNumbering/season are
+      // simply omitted, and whatever episode number was showing (e.g. the
+      // "3" from a season 2 episode 3) carries over untouched rather than
+      // being recalculated into anything (see README "Season-Aware Episode
+      // Tracking" — mode switches are never destructive or automatic).
+      const seasonFields = isSeasonal ? { episodeNumbering: "seasonal" as const, currentSeason: season } : {};
 
       if (type === "anime") {
         onSubmit({
           ...common,
           currentEpisode: current.value,
           totalEpisodes: total.value,
+          ...seasonFields,
           genres: catalogData?.genres ?? detectedGenres,
           studio: emptyToUndefined(values.studio),
         });
@@ -274,6 +311,7 @@ export function MediaItemForm({
           ...common,
           currentEpisode: current.value,
           totalEpisodes: total.value,
+          ...seasonFields,
           genres: catalogData?.genres ?? detectedGenres,
         });
       }
@@ -574,8 +612,48 @@ export function MediaItemForm({
         </Field>
 
         {(type === "anime" || type === "series") && (
+          <Field
+            label="Episode numbering"
+            htmlFor="media-episode-numbering"
+            hint="Absolute counts every episode in order. Season + episode resets the count each season."
+          >
+            <select
+              id="media-episode-numbering"
+              value={values.episodeNumbering}
+              onChange={(event) => updateField("episodeNumbering", event.target.value)}
+              className={inputClass(false)}
+            >
+              <option value="absolute">Absolute episodes</option>
+              <option value="seasonal">Season + episode</option>
+            </select>
+          </Field>
+        )}
+
+        {(type === "anime" || type === "series") && values.episodeNumbering === "seasonal" && (
+          <Field label="Season" htmlFor="media-current-season" error={errors.currentSeason}>
+            <input
+              id="media-current-season"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              value={values.currentSeason}
+              onChange={(event) => updateField("currentSeason", event.target.value)}
+              aria-invalid={Boolean(errors.currentSeason)}
+              aria-describedby={errors.currentSeason ? "media-current-season-error" : undefined}
+              className={inputClass(Boolean(errors.currentSeason), "w-24")}
+              placeholder="1"
+            />
+          </Field>
+        )}
+
+        {(type === "anime" || type === "series") && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Current Episode" htmlFor="media-current-episode" error={errors.currentEpisode}>
+            <Field
+              label={values.episodeNumbering === "seasonal" ? "Episode (in season)" : "Current Episode"}
+              htmlFor="media-current-episode"
+              error={errors.currentEpisode}
+            >
               <input
                 id="media-current-episode"
                 type="number"

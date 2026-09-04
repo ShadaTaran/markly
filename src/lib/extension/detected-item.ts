@@ -25,13 +25,35 @@ function initialStatusFor(mediaType: MediaItem["type"]): TrackingStatus {
   return TRACKING_STATUS_OPTIONS[mediaType].some((option) => option.value === "in_progress") ? "in_progress" : "planned";
 }
 
-/** Maps detected progress onto whichever tracking fields the given media type actually has — used to prefill CatalogTrackingForm's `initial` when a catalog result IS selected, so the detected progress isn't lost/reset to blank (see README "Add or Link"). */
-export function buildDetectedTrackingValues(mediaType: MediaItem["type"], progress: DetectedProgress): Partial<PersonalTrackingValues> {
+/**
+ * Maps detected progress onto whichever tracking fields the given media
+ * type actually has — used to prefill CatalogTrackingForm's `initial` when
+ * a catalog result IS selected, and the "Edit Details" review form when it
+ * isn't, so the detected progress isn't lost/reset to blank (see README
+ * "Add or Link"). Returns the extra season fields alongside
+ * PersonalTrackingValues — CatalogTrackingForm itself has no season input
+ * (see README "Season-Aware Episode Tracking" for why that combination is
+ * out of scope), but the MediaItemForm-based "Edit Details" review path
+ * does, so this is where the season context has to survive the handoff.
+ */
+export function buildDetectedTrackingValues(
+  mediaType: MediaItem["type"],
+  progress: DetectedProgress,
+): Partial<PersonalTrackingValues> & { episodeNumbering?: "seasonal"; currentSeason?: number } {
   if (!progress) return {};
   switch (mediaType) {
     case "anime":
-    case "series":
-      return progress.kind === "episode" ? { currentEpisode: progress.value } : {};
+    case "series": {
+      // Same rule buildDetectedMediaInput applies below: a discovery-only
+      // (not-yet-watched) episode number must never prefill anything, even
+      // in a review form the user hasn't saved yet.
+      if (progress.confirmed === false) return {};
+      if (progress.kind === "episode") return { currentEpisode: progress.value };
+      if (progress.kind === "season_episode") {
+        return { currentEpisode: progress.value, currentSeason: progress.season, episodeNumbering: "seasonal" };
+      }
+      return {};
+    }
     case "manga":
       return progress.kind === "chapter" ? { currentChapter: progress.value } : {};
     case "novel":
@@ -70,8 +92,20 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
   // see README "Episode/Video Tracking") never bakes an unwatched episode
   // number into a newly created item; committed progress only ever
   // arrives later, through the normal monotonic progress endpoint once
-  // the completion threshold is actually reached.
-  const confirmedEpisode = progress?.kind === "episode" && progress.confirmed !== false ? progress.value : undefined;
+  // the completion threshold is actually reached. Stage 25: a
+  // season_episode detection follows the exact same confirmed gate — only
+  // *which* numbers get baked in (episode alone, vs. episode+season)
+  // differs by kind.
+  const isSeasonal = progress?.kind === "season_episode";
+  const confirmedEpisode = (progress?.kind === "episode" || isSeasonal) && progress.confirmed !== false ? progress.value : undefined;
+  const confirmedSeason = isSeasonal && progress.confirmed !== false ? progress.season : undefined;
+  // The numbering marker itself is set as soon as the source is known to
+  // be seasonal — even on a discovery-only ping that leaves the actual
+  // episode/season numbers uncommitted (see README "Season-Aware Episode
+  // Tracking" — Auto-Add establishes numbering mode at creation time, the
+  // same way it already establishes media type, so a later real
+  // completion has somewhere consistent to write to).
+  const episodeNumbering = isSeasonal ? ("seasonal" as const) : undefined;
 
   switch (source.mediaType) {
     case "anime":
@@ -79,6 +113,8 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
         ...common,
         currentEpisode: confirmedEpisode,
         totalEpisodes: undefined,
+        episodeNumbering,
+        currentSeason: confirmedSeason,
         genres: metadata?.genres,
         studio: undefined,
       };
@@ -87,6 +123,8 @@ export function buildDetectedMediaInput(source: TrackingSourceSummary): MediaIte
         ...common,
         currentEpisode: confirmedEpisode,
         totalEpisodes: undefined,
+        episodeNumbering,
+        currentSeason: confirmedSeason,
         genres: metadata?.genres,
       };
     case "manga":

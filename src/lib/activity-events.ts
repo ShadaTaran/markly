@@ -4,6 +4,8 @@ import type { ActivityEventInput, ProgressKind } from "@/types/activity";
 interface ProgressSnapshot {
   kind: ProgressKind;
   value: number;
+  /** Only present when kind === "season_episode". */
+  season?: number;
 }
 
 /** The single personal-progress number for a media item, in its own unit — or undefined if unset. */
@@ -11,7 +13,10 @@ function getProgressSnapshot(item: MediaItem): ProgressSnapshot | undefined {
   switch (item.type) {
     case "anime":
     case "series":
-      return item.currentEpisode !== undefined ? { kind: "episode", value: item.currentEpisode } : undefined;
+      if (item.currentEpisode === undefined) return undefined;
+      return item.episodeNumbering === "seasonal"
+        ? { kind: "season_episode", value: item.currentEpisode, season: item.currentSeason }
+        : { kind: "episode", value: item.currentEpisode };
     case "manga":
       return item.currentChapter !== undefined ? { kind: "chapter", value: item.currentChapter } : undefined;
     case "novel":
@@ -51,7 +56,10 @@ export function diffMediaTrackingEvents(
   const afterProgress = getProgressSnapshot(after);
   const progressChanged =
     afterProgress &&
-    (!beforeProgress || beforeProgress.kind !== afterProgress.kind || beforeProgress.value !== afterProgress.value);
+    (!beforeProgress ||
+      beforeProgress.kind !== afterProgress.kind ||
+      beforeProgress.value !== afterProgress.value ||
+      beforeProgress.season !== afterProgress.season);
 
   if (progressChanged && afterProgress) {
     events.push({
@@ -60,6 +68,7 @@ export function diffMediaTrackingEvents(
       progressKind: afterProgress.kind,
       previousValue: beforeProgress?.value,
       newValue: afterProgress.value,
+      ...(afterProgress.kind === "season_episode" && { previousSeason: beforeProgress?.season, newSeason: afterProgress.season }),
     });
   }
 

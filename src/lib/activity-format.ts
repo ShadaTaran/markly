@@ -8,11 +8,16 @@ function getStatusLabelForType(itemType: MediaItem["type"], status: TrackingStat
   return match?.label ?? STATUS_FILTER_LABELS[status];
 }
 
-const PROGRESS_UNIT_LABELS: Record<Exclude<ProgressKind, "percent" | "playtime">, string> = {
+const PROGRESS_UNIT_LABELS: Record<Exclude<ProgressKind, "percent" | "playtime" | "season_episode">, string> = {
   episode: "Episode",
   chapter: "Chapter",
   page: "Page",
 };
+
+/** "S2E3", or "E3" when the season is unknown (never happens for a real progress_updated event, only defensive). */
+function formatSeasonEpisode(season: number | undefined, episode: number): string {
+  return season !== undefined ? `S${season}E${episode}` : `E${episode}`;
+}
 
 /**
  * Short category line shown above the value change (e.g. "Rating changed",
@@ -80,6 +85,11 @@ export function getActivityDetail(event: ActivityEvent, item: LibraryItem | unde
         return event.previousValue !== undefined
           ? `${event.previousValue}h → ${event.newValue}h`
           : `${event.newValue}h`;
+      }
+      if (event.progressKind === "season_episode") {
+        return event.previousValue !== undefined
+          ? `${formatSeasonEpisode(event.previousSeason, event.previousValue)} → ${formatSeasonEpisode(event.newSeason, event.newValue)}`
+          : formatSeasonEpisode(event.newSeason, event.newValue);
       }
       const label = PROGRESS_UNIT_LABELS[event.progressKind];
       return event.previousValue !== undefined

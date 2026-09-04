@@ -8,7 +8,7 @@ import {
   type CompletionObserverHandle,
 } from "../tracking/video/completion";
 import type { TrackingDetectedMessage, WatchProgressUpdateMessage, PlayerStatusUpdateMessage } from "../types/messages";
-import type { TrackingDetection } from "../adapters/types";
+import { isEpisodeProgressKind, type TrackingDetection } from "../adapters/types";
 
 /**
  * Injected only on pages within our tracked scope (see lib/config.ts —
@@ -66,8 +66,13 @@ function sendDetection(detection: TrackingDetection | null, commit: boolean) {
  * PLAYER_STATUS_UPDATE so a normal async-mount settling window doesn't
  * look identical to a genuine "this player can't be observed."
  */
-let activeObserver: { sourceKey: string; episode: number; video: HTMLVideoElement; handle: CompletionObserverHandle } | null = null;
-let activeDiscovery: { sourceKey: string; episode: number; handle: PlayerDiscoveryHandle } | null = null;
+/** Season-qualified when present (e.g. "s2e3") so a season transition to the same in-season episode number as a prior season is never mistaken for "still the same episode". */
+function episodeIdentity(progress: TrackingDetection["progress"]): string {
+  return progress.season !== undefined ? `s${progress.season}e${progress.value}` : String(progress.value);
+}
+
+let activeObserver: { sourceKey: string; episodeKey: string; video: HTMLVideoElement; handle: CompletionObserverHandle } | null = null;
+let activeDiscovery: { sourceKey: string; episodeKey: string; handle: PlayerDiscoveryHandle } | null = null;
 
 function sendPlayerStatus(sourceKey: string, status: "searching" | "unavailable" | "found") {
   const message: PlayerStatusUpdateMessage = { type: "PLAYER_STATUS_UPDATE", sourceKey, status };
@@ -96,19 +101,19 @@ function attachObserverTo(video: HTMLVideoElement, detection: TrackingDetection)
       chrome.runtime.sendMessage(message).catch(() => undefined);
     },
   });
-  activeObserver = { sourceKey: detection.sourceKey, episode: detection.progress.value, video, handle };
+  activeObserver = { sourceKey: detection.sourceKey, episodeKey: episodeIdentity(detection.progress), video, handle };
   sendPlayerStatus(detection.sourceKey, "found");
 }
 
 function handleEpisodeDetection(detection: TrackingDetection) {
   sendDetection(detection, false);
 
-  const episode = detection.progress.value;
+  const episodeKey = episodeIdentity(detection.progress);
 
-  if (activeObserver && (activeObserver.sourceKey !== detection.sourceKey || activeObserver.episode !== episode)) {
+  if (activeObserver && (activeObserver.sourceKey !== detection.sourceKey || activeObserver.episodeKey !== episodeKey)) {
     stopActiveObserver();
   }
-  if (activeDiscovery && (activeDiscovery.sourceKey !== detection.sourceKey || activeDiscovery.episode !== episode)) {
+  if (activeDiscovery && (activeDiscovery.sourceKey !== detection.sourceKey || activeDiscovery.episodeKey !== episodeKey)) {
     stopActiveDiscovery();
   }
 
@@ -144,7 +149,7 @@ function handleEpisodeDetection(detection: TrackingDetection) {
   // already fired before this line — only assign discovery state if
   // neither happened yet.
   if (!activeObserver) {
-    activeDiscovery = { sourceKey: detection.sourceKey, episode, handle };
+    activeDiscovery = { sourceKey: detection.sourceKey, episodeKey, handle };
     sendPlayerStatus(detection.sourceKey, "searching");
   }
 }
@@ -170,7 +175,7 @@ function runDetection() {
     return;
   }
 
-  if (detection.progress.kind === "episode") {
+  if (isEpisodeProgressKind(detection.progress.kind)) {
     handleEpisodeDetection(detection);
     return;
   }

@@ -18,6 +18,8 @@ const TABLE = "tracking_sources";
 export interface StoredDetectionProgress {
   kind: string;
   value: number;
+  /** Stage 25 — present only when kind === "season_episode"; see EpisodeTrackedItem.currentSeason and README "Season-Aware Episode Tracking". */
+  season?: number;
   metadata?: DetectedMetadata;
   /**
    * Stage 24 — false only for a video "episode detected, not yet watched
@@ -55,7 +57,7 @@ export interface DetectionInput {
   sourceTitle: string;
   sourceUrl: string | null;
   mediaType: MediaItem["type"];
-  progress: { kind: string; value: number };
+  progress: { kind: string; value: number; season?: number };
   detectedMetadata?: DetectedMetadata;
   /** Stage 24 — see StoredDetectionProgress.confirmed. Only ever passed as `false` by the video discovery path; every other caller omits it (defaults to confirmed). */
   confirmed?: boolean;

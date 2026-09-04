@@ -64,10 +64,25 @@ interface TrackableLibraryItem extends MediaLibraryItem {
   rating?: number;
 }
 
+/**
+ * Whether `currentEpisode` counts every episode of the show in one running
+ * sequence ("absolute" — Episode 1, 2, 3…) or resets each season
+ * ("seasonal" — Season 1 Episode 12, then Season 2 Episode 1). Absent
+ * means "absolute" — every item created before Stage 25, and every
+ * AniList-synced item (AniList always reports one continuous absolute
+ * progress number, never a season), is interpreted this way. Never
+ * inferred from currentEpisode/totalEpisodes alone; only ever set
+ * explicitly (a form edit, or a season-aware auto-tracking detection).
+ */
+export type EpisodeNumbering = "absolute" | "seasonal";
+
 /** Adds current/total episode progress, used by Anime and Series. */
 interface EpisodeTrackedItem extends TrackableLibraryItem {
   currentEpisode?: number;
   totalEpisodes?: number;
+  episodeNumbering?: EpisodeNumbering;
+  /** Only meaningful when episodeNumbering === "seasonal" — which season currentEpisode (season-relative, not a running total) belongs to. */
+  currentSeason?: number;
 }
 
 export interface AnimeItem extends EpisodeTrackedItem {

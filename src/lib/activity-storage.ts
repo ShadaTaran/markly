@@ -10,7 +10,7 @@ const ACTIVITY_STORAGE_KEY = "markly.activity";
  */
 const MAX_ACTIVITY_EVENTS = 500;
 
-export const PROGRESS_KINDS: readonly ProgressKind[] = ["episode", "chapter", "page", "percent", "playtime"];
+export const PROGRESS_KINDS: readonly ProgressKind[] = ["episode", "chapter", "page", "percent", "playtime", "season_episode"];
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -35,7 +35,14 @@ function isValidActivityEvent(value: unknown): value is ActivityEvent {
         typeof candidate.progressKind === "string" &&
         (PROGRESS_KINDS as readonly string[]).includes(candidate.progressKind) &&
         isFiniteNumber(candidate.newValue) &&
-        (candidate.previousValue === undefined || isFiniteNumber(candidate.previousValue))
+        (candidate.previousValue === undefined || isFiniteNumber(candidate.previousValue)) &&
+        // Stage 25 — previousSeason/newSeason only ever accompany a
+        // "season_episode" progressKind (see ProgressActivityEvent); both
+        // stay individually optional (a season's very first recorded
+        // position has no previousSeason to report) but must be real
+        // numbers whenever present, same as previousValue/newValue above.
+        (candidate.previousSeason === undefined || isFiniteNumber(candidate.previousSeason)) &&
+        (candidate.newSeason === undefined || isFiniteNumber(candidate.newSeason))
       );
     case "rating_updated":
       return (

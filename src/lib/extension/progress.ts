@@ -101,3 +101,89 @@ export async function applyDetectionToItem(
 
   return { status: result.status, currentValue: result.currentValue };
 }
+
+/**
+ * Stage 25 — the season-aware counterpart to applyDetectionToItem above,
+ * for a detection shaped {kind: "season_episode", season, episode} rather
+ * than a single number. A plain compare-and-set on one numeric field
+ * (apply_extension_progress) can't express "season takes priority over
+ * episode" — comparing (season, episode) lexicographically has to happen
+ * inside the same locked transaction as the read, or two concurrent
+ * requests could each see a stale season and both "win". See
+ * supabase/migrations/0007_stage25_season_progress.sql's
+ * apply_extension_season_episode_progress for the actual comparison and
+ * for numbering_mismatch — the one status this function has that the
+ * numeric one doesn't, returned whenever the target item's existing
+ * numbering is (explicitly or implicitly, via an already-set absolute
+ * currentEpisode) "absolute": Stage 25 never silently reinterprets an
+ * existing item's numbering system.
+ */
+export type SeasonEpisodeApplyStatus =
+  | "updated"
+  | "unchanged"
+  | "behind_current_progress"
+  | "incompatible_media_type"
+  | "item_not_found"
+  | "numbering_mismatch";
+
+export interface SeasonEpisodeApplyResult {
+  status: SeasonEpisodeApplyStatus;
+  currentSeason?: number;
+  currentEpisode?: number;
+}
+
+interface ApplySeasonEpisodeRpcResult {
+  status: SeasonEpisodeApplyStatus;
+  currentSeason?: number;
+  currentEpisode?: number;
+  statusChanged?: boolean;
+}
+
+const SEASON_EPISODE_APPLY_STATUSES: readonly SeasonEpisodeApplyStatus[] = [
+  "updated",
+  "unchanged",
+  "behind_current_progress",
+  "incompatible_media_type",
+  "item_not_found",
+  "numbering_mismatch",
+];
+
+function parseApplySeasonEpisodeResult(data: unknown): ApplySeasonEpisodeRpcResult | null {
+  if (!data || typeof data !== "object") return null;
+  const candidate = data as Record<string, unknown>;
+  const status = candidate.status;
+  if (typeof status !== "string" || !(SEASON_EPISODE_APPLY_STATUSES as readonly string[]).includes(status)) return null;
+
+  const currentSeason = typeof candidate.currentSeason === "number" ? candidate.currentSeason : undefined;
+  const currentEpisode = typeof candidate.currentEpisode === "number" ? candidate.currentEpisode : undefined;
+  const statusChanged = typeof candidate.statusChanged === "boolean" ? candidate.statusChanged : undefined;
+  return { status: status as SeasonEpisodeApplyStatus, currentSeason, currentEpisode, statusChanged };
+}
+
+/** Only ever called for anime/series — route.ts branches on progress.kind before reaching here, same as resolveProgressField already narrows the numeric path to fields that actually exist for a given media type. */
+export async function applySeasonEpisodeProgress(
+  admin: SupabaseClient,
+  userId: string,
+  itemId: string,
+  mediaType: MediaItem["type"],
+  season: number,
+  episode: number,
+): Promise<SeasonEpisodeApplyResult> {
+  if (mediaType !== "anime" && mediaType !== "series") {
+    return { status: "incompatible_media_type" };
+  }
+
+  const { data, error } = await admin.rpc("apply_extension_season_episode_progress", {
+    p_user_id: userId,
+    p_item_id: itemId,
+    p_media_type: mediaType,
+    p_new_season: season,
+    p_new_episode: episode,
+  });
+  if (error) throw error;
+
+  const result = parseApplySeasonEpisodeResult(data);
+  if (!result) throw new Error("apply_extension_season_episode_progress returned an unexpected shape");
+
+  return { status: result.status, currentSeason: result.currentSeason, currentEpisode: result.currentEpisode };
+}

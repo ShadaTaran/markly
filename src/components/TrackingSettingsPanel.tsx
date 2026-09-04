@@ -48,6 +48,9 @@ function hostnameFromSourceUrl(sourceUrl: string | null): string {
 
 function progressLabel(progress: TrackingSourceSummary["lastDetectedProgress"]): string {
   if (!progress) return "—";
+  if (progress.kind === "season_episode") {
+    return progress.season !== undefined ? `Season ${progress.season}, Episode ${progress.value}` : `Episode ${progress.value}`;
+  }
   if (progress.kind === "episode") return `Episode ${progress.value}`;
   if (progress.kind === "chapter") return `Chapter ${progress.value}`;
   if (progress.kind === "page") return `Page ${progress.value}`;

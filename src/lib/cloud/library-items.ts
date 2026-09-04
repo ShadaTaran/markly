@@ -3,6 +3,7 @@ import type { LibraryItemInsert, LibraryItemRow } from "@/lib/supabase/database.
 import type { CatalogSourceReference, LibraryItem, MetadataProvider } from "@/types/library-item";
 import { isMediaItem } from "@/lib/item-detail";
 import {
+  normalizeEpisodeNumbering,
   normalizeNonNegativeInt,
   normalizeNonNegativeNumber,
   normalizePositiveInt,
@@ -79,6 +80,8 @@ export function fromLibraryItemRow(row: LibraryItemRow): LibraryItem {
         type: "anime",
         currentEpisode: normalizeNonNegativeInt(readNumber(meta, "currentEpisode")),
         totalEpisodes: normalizePositiveInt(readNumber(meta, "totalEpisodes")),
+        episodeNumbering: normalizeEpisodeNumbering(readString(meta, "episodeNumbering")),
+        currentSeason: normalizePositiveInt(readNumber(meta, "currentSeason")),
         genres: readStringArray(meta, "genres"),
         studio: readString(meta, "studio"),
       };
@@ -88,6 +91,8 @@ export function fromLibraryItemRow(row: LibraryItemRow): LibraryItem {
         type: "series",
         currentEpisode: normalizeNonNegativeInt(readNumber(meta, "currentEpisode")),
         totalEpisodes: normalizePositiveInt(readNumber(meta, "totalEpisodes")),
+        episodeNumbering: normalizeEpisodeNumbering(readString(meta, "episodeNumbering")),
+        currentSeason: normalizePositiveInt(readNumber(meta, "currentSeason")),
         genres: readStringArray(meta, "genres"),
       };
     case "manga":
@@ -162,12 +167,16 @@ export function toLibraryItemRow(item: LibraryItem, userId: string): LibraryItem
     case "anime":
       if (item.currentEpisode !== undefined) metadata.currentEpisode = item.currentEpisode;
       if (item.totalEpisodes !== undefined) metadata.totalEpisodes = item.totalEpisodes;
+      if (item.episodeNumbering !== undefined) metadata.episodeNumbering = item.episodeNumbering;
+      if (item.currentSeason !== undefined) metadata.currentSeason = item.currentSeason;
       if (item.genres !== undefined) metadata.genres = item.genres;
       if (item.studio !== undefined) metadata.studio = item.studio;
       break;
     case "series":
       if (item.currentEpisode !== undefined) metadata.currentEpisode = item.currentEpisode;
       if (item.totalEpisodes !== undefined) metadata.totalEpisodes = item.totalEpisodes;
+      if (item.episodeNumbering !== undefined) metadata.episodeNumbering = item.episodeNumbering;
+      if (item.currentSeason !== undefined) metadata.currentSeason = item.currentSeason;
       if (item.genres !== undefined) metadata.genres = item.genres;
       break;
     case "manga":

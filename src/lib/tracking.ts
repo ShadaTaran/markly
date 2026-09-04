@@ -1,4 +1,4 @@
-import type { LibraryItem, MediaItem, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
+import type { EpisodeNumbering, LibraryItem, MediaItem, NovelProgressUnit, NovelReadingFormat, TrackingStatus } from "@/types/library-item";
 import { ALL_FILTER } from "@/lib/constants";
 import type { CategoryOption } from "@/lib/library-items";
 
@@ -100,6 +100,16 @@ export function getProgressInfo(item: MediaItem): ProgressInfo | null {
     case "series": {
       if (item.currentEpisode === undefined && item.totalEpisodes === undefined) return null;
       const current = item.currentEpisode ?? 0;
+      if (item.episodeNumbering === "seasonal") {
+        // No percent bar here: totalEpisodes is a whole-series total, and
+        // Stage 25 deliberately never calculates or guesses a per-season
+        // length (see README "Season-Aware Episode Tracking") — showing
+        // "3 / 24" against a seasonal episode count would misleadingly
+        // imply 24 is this season's length.
+        return {
+          text: item.currentSeason !== undefined ? `Season ${item.currentSeason}, Episode ${current}` : `Episode ${current}`,
+        };
+      }
       if (item.totalEpisodes !== undefined) {
         return {
           text: `${current} / ${item.totalEpisodes} episodes`,
@@ -150,7 +160,12 @@ export function getQuickIncrementInfo(item: MediaItem): QuickIncrementInfo | nul
     case "anime":
     case "series": {
       const current = item.currentEpisode ?? 0;
-      return { unitLabel: "episode", atMax: item.totalEpisodes !== undefined && current >= item.totalEpisodes };
+      // A seasonal item's totalEpisodes (whole-series) can't cap a
+      // season-relative episode count — never fabricate a per-season max
+      // (see README "Season-Aware Episode Tracking"), so +1 stays
+      // available indefinitely for seasonal items.
+      const atMax = item.episodeNumbering !== "seasonal" && item.totalEpisodes !== undefined && current >= item.totalEpisodes;
+      return { unitLabel: "episode", atMax };
     }
     case "manga": {
       const current = item.currentChapter ?? 0;
@@ -224,4 +239,8 @@ export function normalizeProgressUnit(value: unknown): NovelProgressUnit | undef
 
 export function normalizeReadingFormat(value: unknown): NovelReadingFormat | undefined {
   return value === "book" || value === "light_novel" || value === "web_novel" ? value : undefined;
+}
+
+export function normalizeEpisodeNumbering(value: unknown): EpisodeNumbering | undefined {
+  return value === "absolute" || value === "seasonal" ? value : undefined;
 }

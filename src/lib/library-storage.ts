@@ -1,5 +1,6 @@
 import type { LibraryItem, WebsiteItem } from "@/types/library-item";
 import {
+  normalizeEpisodeNumbering,
   normalizeNonNegativeInt,
   normalizeNonNegativeNumber,
   normalizePercent,
@@ -48,6 +49,8 @@ function isValidLibraryItem(value: unknown): value is LibraryItem {
   if (candidate.rating !== undefined && typeof candidate.rating !== "number") return false;
   if (candidate.currentEpisode !== undefined && typeof candidate.currentEpisode !== "number") return false;
   if (candidate.totalEpisodes !== undefined && typeof candidate.totalEpisodes !== "number") return false;
+  if (candidate.episodeNumbering !== undefined && typeof candidate.episodeNumbering !== "string") return false;
+  if (candidate.currentSeason !== undefined && typeof candidate.currentSeason !== "number") return false;
   if (candidate.currentChapter !== undefined && typeof candidate.currentChapter !== "number") return false;
   if (candidate.totalChapters !== undefined && typeof candidate.totalChapters !== "number") return false;
   if (candidate.progressValue !== undefined && typeof candidate.progressValue !== "number") return false;
@@ -113,10 +116,18 @@ function normalizeTrackingFields(item: LibraryItem): LibraryItem {
     case "series": {
       let currentEpisode = normalizeNonNegativeInt(item.currentEpisode);
       const totalEpisodes = normalizePositiveInt(item.totalEpisodes);
-      if (currentEpisode !== undefined && totalEpisodes !== undefined && currentEpisode > totalEpisodes) {
+      const episodeNumbering = normalizeEpisodeNumbering(item.episodeNumbering);
+      // A leftover currentSeason on an item that isn't (or no longer is)
+      // seasonal is dropped rather than kept dangling — never reinterpreted,
+      // just not carried forward without the marker that gives it meaning.
+      const currentSeason = episodeNumbering === "seasonal" ? normalizePositiveInt(item.currentSeason) : undefined;
+      // Only a seasonal item's totalEpisodes clamp is skipped — see
+      // getQuickIncrementInfo's same reasoning (tracking.ts): totalEpisodes
+      // is a whole-series total, not a per-season one.
+      if (episodeNumbering !== "seasonal" && currentEpisode !== undefined && totalEpisodes !== undefined && currentEpisode > totalEpisodes) {
         currentEpisode = totalEpisodes;
       }
-      return { ...item, status, rating, currentEpisode, totalEpisodes };
+      return { ...item, status, rating, currentEpisode, totalEpisodes, episodeNumbering, currentSeason };
     }
     case "manga": {
       let currentChapter = normalizeNonNegativeNumber(item.currentChapter);

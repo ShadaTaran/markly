@@ -140,14 +140,28 @@ export function useLibraryItems(
     if (item.type === "anime" || item.type === "series") {
       const previous = item.currentEpisode;
       const next = (previous ?? 0) + 1;
-      const currentEpisode = item.totalEpisodes !== undefined ? Math.min(next, item.totalEpisodes) : next;
+      const isSeasonal = item.episodeNumbering === "seasonal";
+      // A seasonal item's totalEpisodes is a whole-series total, not this
+      // season's length (Stage 25 never calculates or guesses one — see
+      // getQuickIncrementInfo/tracking.ts), so it never clamps here; +1
+      // also never touches currentSeason itself — rolling into a new
+      // season is never inferred from blind arithmetic, only from a real
+      // detection or an explicit edit.
+      const currentEpisode = !isSeasonal && item.totalEpisodes !== undefined ? Math.min(next, item.totalEpisodes) : next;
       // Already at the known total — clamping means the value doesn't
       // actually move, so there's nothing to persist or log.
       if (previous === currentEpisode) return;
 
       const status = autoAdvanceStatus(previous, currentEpisode, item.status);
 
-      events.push({ type: "progress_updated", itemId: item.id, progressKind: "episode", previousValue: previous, newValue: currentEpisode });
+      events.push({
+        type: "progress_updated",
+        itemId: item.id,
+        progressKind: isSeasonal ? "season_episode" : "episode",
+        previousValue: previous,
+        newValue: currentEpisode,
+        ...(isSeasonal && { previousSeason: item.currentSeason, newSeason: item.currentSeason }),
+      });
       if (status !== item.status) {
         events.push({ type: "status_updated", itemId: item.id, previousValue: item.status, newValue: status });
       }

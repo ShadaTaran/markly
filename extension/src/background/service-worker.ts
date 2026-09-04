@@ -2,7 +2,7 @@ import { isWithinTrackedScope } from "../lib/config";
 import { getDeviceToken, setDeviceToken, clearDeviceToken } from "../lib/storage";
 import { pairDevice, submitProgress, type ProgressApiResult } from "../lib/api";
 import type { ExtensionMessage, TabState } from "../types/messages";
-import type { TrackingDetection } from "../adapters/types";
+import type { TrackingDetection, TrackingProgress } from "../adapters/types";
 
 /**
  * Restricts chrome.storage.local to trusted extension contexts (this
@@ -31,11 +31,24 @@ const tabState = new Map<number, TabState>();
  * authoritative either way (see /api/extension/progress) — this only
  * avoids redundant round trips on reload/SPA-re-detection repeats.
  */
-const lastCommittedValue = new Map<string, number>();
-const lastDiscoveredValue = new Map<string, number>();
+const lastCommittedValue = new Map<string, string>();
+const lastDiscoveredValue = new Map<string, string>();
 
 function dedupeKey(adapterId: string, sourceKey: string): string {
   return `${adapterId}::${sourceKey}`;
+}
+
+/**
+ * Stage 25 — the dedupe caches used to key directly on `progress.value`,
+ * fine while every progress kind had exactly one number. A season_episode
+ * detection reuses `value` for the in-season episode number, so two
+ * different seasons can share the same value (S1E3 and S2E3 must never be
+ * treated as "the same, already-sent" value) — this folds season into the
+ * comparison key whenever it's present, and is a no-op for every other
+ * kind (identical to comparing `.value` directly, as before).
+ */
+function progressDedupeValue(progress: TrackingProgress): string {
+  return progress.season !== undefined ? `s${progress.season}e${progress.value}` : String(progress.value);
 }
 
 /** Shared by the load-triggered gate below and the popup's "just granted permission, track this tab right now" request — never duplicated. */
@@ -154,8 +167,9 @@ async function handleDetection(
 
   const key = dedupeKey(detection.adapterId, detection.sourceKey);
   const cache = commit ? lastCommittedValue : lastDiscoveredValue;
+  const dedupeValue = progressDedupeValue(detection.progress);
 
-  if (cache.get(key) === detection.progress.value) {
+  if (cache.get(key) === dedupeValue) {
     const cached = tabId !== undefined ? tabState.get(tabId) : undefined;
     const result: ProgressApiResult =
       cached?.result ?? (commit ? { status: "unchanged", currentValue: detection.progress.value } : { status: "detected" });
@@ -181,7 +195,7 @@ async function handleDetection(
     // Markly ("server_error") is remembered as "already sent" — both mean
     // this value was never actually recorded, so the next opportunity to
     // detect the same value must retry rather than silently skip it.
-    cache.set(key, detection.progress.value);
+    cache.set(key, dedupeValue);
   }
 
   // Once progress actually commits, the local watch-ratio bar no longer

@@ -38,6 +38,11 @@ export type ProgressApiStatus =
   | "tracking_disabled"
   | "incompatible_media_type"
   | "item_not_found"
+  // Stage 25 — only ever returned for a season_episode-kind commit: this
+  // item's existing numbering is (explicitly or implicitly) absolute, so
+  // the seasonal write was refused rather than silently reinterpreting it
+  // — see src/lib/extension/progress.ts's applySeasonEpisodeProgress.
+  | "numbering_mismatch"
   | "unauthorized"
   // Stage 24 — a discovery-only (commitProgress: false) request succeeded:
   // identity/Smart Auto-Link/Auto-Add ran, but no progress was committed.
@@ -67,6 +72,9 @@ export type NeedsLinkReason = "ambiguous" | "no_match";
 export interface ProgressApiResult {
   status: ProgressApiStatus;
   currentValue?: number;
+  /** Stage 25 — only ever set for a season_episode-kind response; see ProgressApiStatus's numbering_mismatch note. */
+  currentSeason?: number;
+  currentEpisode?: number;
   /** True only on the exact request that just created a smart auto-link (Stage 18) OR a Stage 22 auto-add that found an exact match once its advisory lock resolved — never set again for later chapters from the same (now-linked) source. */
   autoLinked?: boolean;
   /** Stage 22 — true only on the exact request that just auto-created the LibraryItem itself (never re-set for later chapters). Mutually exclusive with autoLinked: a given response is never both, since a source is either newly created or newly linked to something that already existed. */
@@ -88,6 +96,8 @@ export async function submitProgress(token: string, detection: TrackingDetection
     const data = (await response.json().catch(() => ({}))) as {
       status?: ProgressApiStatus;
       currentValue?: number;
+      currentSeason?: number;
+      currentEpisode?: number;
       autoLinked?: boolean;
       autoAdded?: boolean;
       reason?: NeedsLinkReason;
@@ -97,6 +107,8 @@ export async function submitProgress(token: string, detection: TrackingDetection
     return {
       status: data.status,
       currentValue: data.currentValue,
+      currentSeason: data.currentSeason,
+      currentEpisode: data.currentEpisode,
       autoLinked: data.autoLinked,
       autoAdded: data.autoAdded,
       reason: data.reason,

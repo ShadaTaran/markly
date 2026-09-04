@@ -193,6 +193,8 @@ export function createMediaItem(
         type,
         currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
         totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+        episodeNumbering: "episodeNumbering" in values ? values.episodeNumbering : undefined,
+        currentSeason: "currentSeason" in values ? values.currentSeason : undefined,
         genres: "genres" in values ? values.genres : undefined,
         studio: "studio" in values ? values.studio : undefined,
       };
@@ -202,6 +204,8 @@ export function createMediaItem(
         type,
         currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
         totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+        episodeNumbering: "episodeNumbering" in values ? values.episodeNumbering : undefined,
+        currentSeason: "currentSeason" in values ? values.currentSeason : undefined,
         genres: "genres" in values ? values.genres : undefined,
       };
     case "manga":
@@ -260,6 +264,8 @@ export function updateMediaItem(item: MediaItem, values: MediaItemInput): MediaI
         type: item.type,
         currentEpisode: "currentEpisode" in values ? values.currentEpisode : undefined,
         totalEpisodes: "totalEpisodes" in values ? values.totalEpisodes : undefined,
+        episodeNumbering: "episodeNumbering" in values ? values.episodeNumbering : undefined,
+        currentSeason: "currentSeason" in values ? values.currentSeason : undefined,
       };
     case "manga":
       return {

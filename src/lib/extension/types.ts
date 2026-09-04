@@ -10,7 +10,7 @@ export interface TrackingSourceSummary {
   mediaType: MediaItem["type"];
   libraryItemId: string | null;
   autoTrackEnabled: boolean;
-  lastDetectedProgress: { kind: string; value: number; confirmed?: boolean } | null;
+  lastDetectedProgress: { kind: string; value: number; season?: number; confirmed?: boolean } | null;
   /** Optional safe enrichment metadata from the most recent detection (see README "Metadata Enrichment") — stored alongside lastDetectedProgress in the same DB column, presented here as its own field. */
   lastDetectedMetadata?: DetectedMetadata;
   lastSeenAt: string;

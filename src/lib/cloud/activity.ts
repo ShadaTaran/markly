@@ -37,7 +37,17 @@ export function toActivityEventRow(event: ActivityEvent, userId: string): Activi
 
   switch (event.type) {
     case "progress_updated":
-      data = { progressKind: event.progressKind, previousValue: event.previousValue, newValue: event.newValue, source: event.source };
+      data = {
+        progressKind: event.progressKind,
+        previousValue: event.previousValue,
+        newValue: event.newValue,
+        // Stage 25 — only ever present on a "season_episode" event; every
+        // other progressKind simply writes these as undefined, which JSON-
+        // serializes away (never a literal null in the stored row).
+        previousSeason: event.previousSeason,
+        newSeason: event.newSeason,
+        source: event.source,
+      };
       break;
     case "rating_updated":
       data = { previousValue: event.previousValue, newValue: event.newValue, source: event.source };
@@ -69,7 +79,16 @@ function fromActivityEventRow(row: ActivityEventRow): ActivityEvent | null {
       const progressKind = readProgressKind(data);
       const newValue = readNumber(data, "newValue");
       if (!progressKind || newValue === undefined) return null;
-      return { ...base, type: "progress_updated", progressKind, previousValue: readNumber(data, "previousValue"), newValue, source: readSource(data) };
+      return {
+        ...base,
+        type: "progress_updated",
+        progressKind,
+        previousValue: readNumber(data, "previousValue"),
+        newValue,
+        previousSeason: readNumber(data, "previousSeason"),
+        newSeason: readNumber(data, "newSeason"),
+        source: readSource(data),
+      };
     }
     case "rating_updated":
       return { ...base, type: "rating_updated", previousValue: readNumber(data, "previousValue"), newValue: readNumber(data, "newValue"), source: readSource(data) };

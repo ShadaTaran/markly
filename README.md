@@ -354,6 +354,26 @@ Reading and watching are different acts: opening a chapter's page *is* reading p
 
 **Smart Auto-Link / cross-media isolation:** unchanged, untouched file (`src/lib/extension/auto-link.ts`) — an Anime source is still never a candidate against a same-titled Novel or Series item.
 
+### Season-Aware Episode Tracking (Stage 25)
+
+`currentEpisode: number` correctly represents Episode 1 → 2 → 3, but not a season transition: Season 1 Episode 12 → Season 2 Episode 1 is a numeric *decrease* (12 → 1) that a plain "must advance" compare-and-set would reject as backwards progress. Stage 25 adds a second, explicit numbering mode rather than trying to make one number do both jobs.
+
+**Numbering mode, additive and opt-in.** `AnimeItem`/`SeriesItem` gain two new optional fields: `episodeNumbering?: "absolute" | "seasonal"` and `currentSeason?: number`. **Absent means absolute** — every item created before Stage 25, and every AniList-synced item (AniList's integration was re-verified to only ever write plain `currentEpisode`, never `currentSeason`/`episodeNumbering` — see `src/lib/integrations/anilist/sync.ts`), is interpreted exactly as it always has been. Nothing is ever silently reinterpreted: the field is only ever set explicitly, by a form edit or by a season-aware detection.
+
+**Wire shape.** The extension's `TrackingProgress` gains an optional `season?: number`, read only when `kind === "season_episode"` — every other kind (including plain `"episode"`) never sets it, so every pre-Stage-25 consumer that only ever read `{kind, value}` (popup formatting, the service-worker's dedup cache, `StoredDetectionProgress`) keeps compiling and working unchanged; only code that actually needs to distinguish the two kinds does.
+
+**Comparison is lexicographic, in the database.** A season+episode pair can't be compared by reading one field, deciding in JavaScript, then writing — that reopens the exact read-compare-write race Stage 18's `apply_extension_progress` closed for the numeric case. `apply_extension_season_episode_progress` (`supabase/migrations/0007_stage25_season_progress.sql`) locks the row, then compares `(season, episode)` as a tuple: a **higher season always wins, regardless of episode** (S2E1 beats S1E20); within the same season, only a **higher episode** wins; a **lower season never wins**, no matter how high its episode number. A `numbering_mismatch` status protects every item that isn't already explicitly seasonal — one with a real `currentEpisode` already recorded and no seasonal marker (every legacy item, every AniList item) refuses a seasonal write outright rather than being silently converted; only an already-seasonal item, or one with no progress recorded at all yet, accepts one.
+
+**Discovery/commit preserved.** A season-aware detection still sends an unconfirmed discovery ping first (Stage 24's split, unchanged) — Auto-Add may create the item and mark it `episodeNumbering: "seasonal"` right away, but `currentSeason`/`currentEpisode` stay unset until a real completion commits them (`buildDetectedMediaInput`, `src/lib/extension/detected-item.ts`).
+
+**UI.** `MediaItemForm` gets an "Episode numbering" select (plain copy — "Absolute episodes" / "Season + episode", no DB jargon) and a conditional "Season" field; switching numbering mode is always an explicit, visible save, never an automatic conversion (17 is never silently turned into "S1E17"). Card/detail progress display (`getProgressInfo`, `src/lib/tracking.ts`) shows "Season 2, Episode 3" for a seasonal item with no percent bar (a per-season length is never calculated or guessed — `totalEpisodes` stays a whole-series total). The quick "+1" control only ever advances the in-season episode number — it never infers a season rollover from arithmetic, and (having no per-season length to compare against) is never shown as "at max" for a seasonal item. Activity history reads "S1E12 → S2E1", never a bare "12 → 1".
+
+**Bugfix — activity storage's progress-kind whitelist.** Proven live on the dev harness: creating a seasonal item and clicking "+1" wrote a correct `progress_updated` event to `localStorage` — but the *next* page load silently lost it. Root cause: `activity-storage.ts`'s `loadActivity()` filters out any event whose `progressKind` isn't in a hardcoded list (`PROGRESS_KINDS`), which didn't yet include `"season_episode"` — the filtered (event-missing) list was then immediately written back by the ordinary hydration-triggered persistence effect, permanently erasing the real event. Fixed by adding `"season_episode"` to the list (and validating its optional `previousSeason`/`newSeason` fields the same way `previousValue`/`newValue` already were); the same gap existed in the cloud round-trip (`src/lib/cloud/activity.ts` dropped `previousSeason`/`newSeason` when reading/writing Supabase's `activity_events.data` JSONB) and was fixed alongside it. Verified live end-to-end after the fix: the event now survives a real page reload, and the Dashboard's Recent Activity correctly renders "S2E5 → S2E6".
+
+**Dev harness** — `/dev/video-test/show/season-N/episode-M`, reusing Stage 24's generated-video component. Read by a dedicated, narrowly-scoped adapter (`extension/src/adapters/markly-season-test.ts`, matching only Markly's own dev origin) rather than an extension to universal detection — Stage 25 is the progress *model*, not provider expansion, and no real-world evidence backs a generic season URL/heading shape the way Stage 23's chapter/episode patterns had.
+
+**Not implemented (deliberately out of scope for this stage):** any real streaming-site adapter, automatic season-length calculation, cross-season AniList merging, specials/OVA reconciliation, and season editing in the detail page's lightweight "Your Tracking" quick-edit card (only the full Edit Details form exposes the Season field — see the module comment in `src/lib/extension/detected-item.ts`'s `buildDetectedTrackingValues` for why `CatalogTrackingForm`'s compact add-from-catalog flow was left untouched too).
+
 ## Project Structure
 
 ```
@@ -399,6 +419,12 @@ scripts/
   verify-title-relevance.mjs  Standalone check for catalog-result relevance ranking, including the
                   exact "Lord of the Mysteries" / Open Library fuzzy-match bug report (see "Add or
                   Link" above) — run with `node scripts/verify-title-relevance.mjs`
+  verify-video-tracking.mjs  Standalone check for the completion observer, primary-video selection,
+                  and discovery-vs-commit auto-tracking model (see "Episode/Video Tracking" above) —
+                  run with `node scripts/verify-video-tracking.mjs`
+  verify-season-tracking.mjs  Standalone check for the season+episode comparison RPC, season-aware
+                  Auto-Add/Activity/quick-increment behavior, and AniList isolation (see "Season-Aware
+                  Episode Tracking" above) — run with `node scripts/verify-season-tracking.mjs`
 supabase/
   migrations/     SQL schema + Row Level Security policies for the optional Supabase backend
 extension/

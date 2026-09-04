@@ -31,8 +31,10 @@ async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
   return tab;
 }
 
-function formatProgress(progress: { kind: string; value: number }): string {
+function formatProgress(progress: { kind: string; value: number; season?: number }): string {
   switch (progress.kind) {
+    case "season_episode":
+      return progress.season !== undefined ? `Season ${progress.season}, Episode ${progress.value}` : `Episode ${progress.value}`;
     case "episode":
       return `Episode ${progress.value}`;
     case "chapter":
@@ -168,6 +170,12 @@ function statusLineFor(state: TabState): StatusLine {
       return { text: isEpisode ? "✓ Episode tracked" : "✓ Tracked" };
     case "behind_current_progress":
       return { text: "Already further along in Markly", className: "muted" };
+    case "numbering_mismatch":
+      // Stage 25 — this item already tracks absolute episode numbers; a
+      // seasonal detection can't be applied to it without the user
+      // deciding to switch it over (Edit Details in Markly), which this
+      // popup deliberately never does automatically.
+      return { text: "This item tracks episodes differently in Markly", className: "muted" };
     case "needs_link":
       return result.reason === "ambiguous"
         ? { text: "Multiple Markly items may match.", className: "muted", linkLabel: "Choose item" }
