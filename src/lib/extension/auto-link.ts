@@ -1,27 +1,15 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MediaItem } from "@/types/library-item";
+import { normalizeTitleForMatching } from "@/lib/title-normalization";
 
-/**
- * Deterministic comparison key for title matching — folds away
- * differences a person would never consider meaningful (case, incidental
- * whitespace, common quote/dash character variants) without touching
- * anything that could change what the title actually says. Deliberately
- * does not strip words, numbers, or ordinary punctuation: "Lord of
- * Mysteries" and "Lord of Mysteries 2" must never normalize to the same
- * key. This is a comparison key only, never displayed or stored in place
- * of the real title.
- */
-export function normalizeTitleForMatching(title: string): string {
-  return title
-    .normalize("NFKC")
-    .replace(/[‘’‛]/g, "'")
-    .replace(/[“”‟]/g, '"')
-    .replace(/[‒–—―]/g, "-")
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ");
-}
+// Stage 27 — moved to a shared, server/client-neutral module
+// (title-normalization.ts has no "server-only" marker) so Stage 27's
+// client-side duplicate detection (lib/duplicate-detection.ts) can reuse
+// the exact same implementation instead of a second, subtly-different
+// one. Re-exported here so every existing importer of
+// `normalizeTitleForMatching` from this file keeps working unchanged.
+export { normalizeTitleForMatching };
 
 export type SmartAutoLinkOutcome =
   | { kind: "matched"; libraryItemId: string }

@@ -158,6 +158,31 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     }
   }
 
+  /**
+   * Stage 27 — local mode only, called by the merge orchestration
+   * (LibraryView/DashboardView's duplicate-merge flow) right after
+   * `library.mergeItems` succeeds for a signed-out user. Cloud mode never
+   * calls this: collection_items is moved server-side, atomically, inside
+   * merge_library_items itself (see the migration's doc comment for why
+   * collections has to move via INSERT+DELETE there, not a plain UPDATE)
+   * — the caller reloads collections from the server afterward instead.
+   * Replaces `duplicateId` with `survivorId` in every collection's
+   * itemIds, dropping the duplicate's entry outright wherever the
+   * survivor is already a member (Section 22 — no duplicate entries).
+   */
+  function mergeItemReferences(survivorId: string, duplicateId: string) {
+    if (userId) return;
+    setCollections((current) =>
+      current.map((collection) => {
+        if (!collection.itemIds.includes(duplicateId)) return collection;
+        const itemIds = collection.itemIds.includes(survivorId)
+          ? collection.itemIds.filter((id) => id !== duplicateId)
+          : collection.itemIds.map((id) => (id === duplicateId ? survivorId : id));
+        return { ...collection, itemIds, updatedAt: new Date().toISOString() };
+      }),
+    );
+  }
+
   function deleteCollection(id: string) {
     setCollections((current) => current.filter((collection) => collection.id !== id));
 
@@ -180,6 +205,7 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     createCollection,
     updateCollection,
     deleteCollection,
+    mergeItemReferences,
     reload: hydrate,
   };
 }

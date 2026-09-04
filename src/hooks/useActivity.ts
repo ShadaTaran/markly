@@ -123,5 +123,19 @@ export function useActivity(userId?: string | null) {
     return events.filter((event) => event.itemId === itemId);
   }
 
-  return { events, isHydrated, error, logEvent, removeEventsForItem, getEventsForItem, reload: hydrate };
+  /**
+   * Stage 27 — local mode only, the Activity-history half of the merge
+   * orchestration (see useCollections.mergeItemReferences's identical
+   * reasoning). Cloud mode never calls this: activity_events is
+   * reassigned server-side, atomically, inside merge_library_items — the
+   * caller reloads Activity from the server afterward instead. Every
+   * event's historical value (type/progressKind/previousValue/newValue/
+   * source) is preserved verbatim; only itemId changes.
+   */
+  function reassignEventsForItem(oldItemId: string, newItemId: string) {
+    if (userId) return;
+    setEvents((current) => current.map((event) => (event.itemId === oldItemId ? { ...event, itemId: newItemId } : event)));
+  }
+
+  return { events, isHydrated, error, logEvent, removeEventsForItem, getEventsForItem, reassignEventsForItem, reload: hydrate };
 }

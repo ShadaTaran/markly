@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LibraryItemInsert, LibraryItemRow } from "@/lib/supabase/database.types";
-import type { CatalogSourceReference, LibraryItem, MetadataProvider } from "@/types/library-item";
+import type { CatalogSourceReference, LibraryItem, MediaItem, MetadataProvider } from "@/types/library-item";
 import { isMediaItem } from "@/lib/item-detail";
 import {
   normalizeEpisodeNumbering,
@@ -235,4 +235,80 @@ export async function upsertLibraryItem(supabase: SupabaseClient, item: LibraryI
 export async function deleteLibraryItemRow(supabase: SupabaseClient, id: string): Promise<void> {
   const { error } = await supabase.from("library_items").delete().eq("id", id);
   if (error) throw error;
+}
+
+export type MergeLibraryItemsStatus =
+  | "merged"
+  | "unauthorized"
+  | "same_item"
+  | "not_found"
+  | "type_mismatch"
+  | "numbering_mode_conflict"
+  | "progress_unit_conflict"
+  | "catalog_source_conflict";
+
+export interface MergeLibraryItemsResult {
+  status: MergeLibraryItemsStatus;
+}
+
+const MERGE_STATUSES: readonly MergeLibraryItemsStatus[] = [
+  "merged",
+  "unauthorized",
+  "same_item",
+  "not_found",
+  "type_mismatch",
+  "numbering_mode_conflict",
+  "progress_unit_conflict",
+  "catalog_source_conflict",
+];
+
+function parseMergeResult(data: unknown): MergeLibraryItemsResult | null {
+  if (!data || typeof data !== "object") return null;
+  const status = (data as Record<string, unknown>).status;
+  if (typeof status !== "string" || !(MERGE_STATUSES as readonly string[]).includes(status)) return null;
+  return { status: status as MergeLibraryItemsStatus };
+}
+
+/**
+ * Calls the atomic merge_library_items RPC (see
+ * supabase/migrations/0009_stage27_merge_library_items.sql). `mergedItem`
+ * is the client's already-reviewed field-merge computation
+ * (src/lib/library-merge.ts's computeMergedLibraryItem) — trusted for
+ * title/description/tags/genres/cover/catalogSource/etc., but the RPC
+ * independently recomputes every progress-bearing field itself from
+ * whatever the two rows actually contain at lock time (see the
+ * migration's own doc comment for why: a TrackingSource can commit real
+ * progress to the duplicate at any moment, including while this call is
+ * in flight). Session-authenticated — never the admin client; ownership
+ * is enforced inside the function via auth.uid(), not a client-supplied id.
+ */
+export async function mergeLibraryItems(
+  supabase: SupabaseClient,
+  survivorId: string,
+  duplicateId: string,
+  mergedItem: MediaItem,
+  userId: string,
+): Promise<MergeLibraryItemsResult> {
+  const mergedRow = toLibraryItemRow(mergedItem, userId);
+  const { data, error } = await supabase.rpc("merge_library_items", {
+    p_survivor_id: survivorId,
+    p_duplicate_id: duplicateId,
+    p_merged_row: {
+      title: mergedRow.title,
+      description: mergedRow.description,
+      category: mergedRow.category,
+      tags: mergedRow.tags,
+      favorite: mergedRow.favorite,
+      image_url: mergedRow.image_url,
+      source_url: mergedRow.source_url,
+      status: mergedRow.status,
+      rating: mergedRow.rating,
+      metadata: mergedRow.metadata,
+    },
+  });
+  if (error) throw error;
+
+  const result = parseMergeResult(data);
+  if (!result) throw new Error("merge_library_items returned an unexpected shape");
+  return result;
 }

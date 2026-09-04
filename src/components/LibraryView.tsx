@@ -33,6 +33,10 @@ import {
 } from "@/lib/library-items";
 import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
+import { findDuplicateGroups, type DuplicateGroup } from "@/lib/duplicate-detection";
+import { computeMergedLibraryItem, MERGE_BLOCK_REASON_LABELS } from "@/lib/library-merge";
+import { DuplicateMergeDialog } from "@/components/DuplicateMergeDialog";
+import { isMediaItem } from "@/lib/item-detail";
 
 interface LibraryViewProps {
   items: LibraryItem[];
@@ -73,6 +77,12 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const [collectionDialogState, setCollectionDialogState] = useState<CollectionDialogState>(null);
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<Collection | null>(null);
   const [membershipItem, setMembershipItem] = useState<LibraryItem | null>(null);
+  const [reviewGroup, setReviewGroup] = useState<DuplicateGroup | null>(null);
+
+  // Stage 27 — pure, client-side, over items this view already has (see
+  // README "Duplicate detection performance"). Never fuzzy — see
+  // lib/duplicate-detection.ts.
+  const duplicateGroups = useMemo(() => findDuplicateGroups(items), [items]);
 
   const collectionOptions = useMemo(() => getCollectionOptions(collections, items), [collections, items]);
 
@@ -291,6 +301,64 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     setCollectionDeleteTarget(null);
   }
 
+  /**
+   * Stage 27 — orchestrates one pairwise merge across all three stores.
+   *
+   * Local mode ordering matters here, and got this wrong on the first
+   * pass (caught live, not assumed): useCollections has a self-healing
+   * effect that strips any collection itemId no longer present in
+   * `items`, reacting whenever `items` changes. If the duplicate is
+   * removed from the library BEFORE its collection memberships are
+   * reassigned to the survivor, that effect sees a now-dangling itemId
+   * and strips it outright — the membership is lost instead of moved,
+   * even though mergeItemReferences itself is correct in isolation.
+   * Validating first (via the same pure computeMergedLibraryItem the
+   * hook uses internally, so a blocked merge never touches anything) and
+   * then reassigning collections/activity BEFORE calling
+   * library.mergeItems keeps the "duplicate id disappears from `items`"
+   * moment and the "collections/activity already point at the survivor"
+   * moment in the same synchronous batch, so the cleanup effect never
+   * observes an in-between state with nothing to strip.
+   *
+   * Cloud mode doesn't have this hazard at all — the RPC moves every
+   * relationship atomically before deleting the duplicate row — so
+   * mergeItemReferences/reassignEventsForItem no-op there regardless of
+   * call order, and collections/activity are reloaded from the server
+   * afterward instead of locally replicated.
+   */
+  async function handleMergeDuplicates(survivorId: string, duplicateId: string): Promise<{ ok: boolean; errorText?: string }> {
+    const survivor = library.items.find((candidate) => candidate.id === survivorId);
+    const duplicate = library.items.find((candidate) => candidate.id === duplicateId);
+    if (!survivor || !duplicate || !isMediaItem(survivor) || !isMediaItem(duplicate)) {
+      return { ok: false, errorText: "One of these items couldn't be found. Try again." };
+    }
+    const preview = computeMergedLibraryItem(survivor, duplicate);
+    if (preview.status === "blocked") {
+      return { ok: false, errorText: MERGE_BLOCK_REASON_LABELS[preview.reason] };
+    }
+
+    if (!userId) {
+      collectionsStore.mergeItemReferences(survivorId, duplicateId);
+      activity.reassignEventsForItem(duplicateId, survivorId);
+    }
+
+    const result = await library.mergeItems(survivorId, duplicateId);
+    if (result.status === "blocked") {
+      return { ok: false, errorText: MERGE_BLOCK_REASON_LABELS[result.reason] };
+    }
+    if (result.status === "error") {
+      return {
+        ok: false,
+        errorText: result.reason === "network" ? "Couldn't reach Markly. Try again." : "One of these items couldn't be found. Try again.",
+      };
+    }
+
+    if (userId) {
+      await Promise.all([collectionsStore.reload(), activity.reload()]);
+    }
+    return { ok: true };
+  }
+
   function handleOpenMembershipDialog(item: LibraryItem) {
     setMembershipItem(item);
   }
@@ -393,6 +461,30 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
               />
             </div>
 
+            {duplicateGroups.length > 0 && (
+              <div className="mt-4 rounded-md border border-border bg-surface p-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+                  Potential duplicates · {duplicateGroups.length}
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {duplicateGroups.map((group) => (
+                    <li key={group.key} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate text-foreground">
+                        {group.items[0].title} · {group.items.length} items
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setReviewGroup(group)}
+                        className="shrink-0 text-xs font-medium text-accent hover:underline"
+                      >
+                        Review
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {activeTag && (
                 <button
@@ -477,6 +569,16 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
         onCreateCollection={handleQuickCreateCollection}
         onClose={handleCloseMembershipDialog}
       />
+
+      {reviewGroup && (
+        <DuplicateMergeDialog
+          key={reviewGroup.key}
+          group={reviewGroup}
+          collections={collections}
+          onMerge={handleMergeDuplicates}
+          onClose={() => setReviewGroup(null)}
+        />
+      )}
     </div>
   );
 }

@@ -19,7 +19,8 @@ import { diffMediaTrackingEvents } from "@/lib/activity-events";
 import { isMediaItem } from "@/lib/item-detail";
 import { autoAdvanceStatus } from "@/lib/tracking";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { deleteLibraryItemRow, fetchLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
+import { deleteLibraryItemRow, fetchLibraryItems, mergeLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
+import { computeMergedLibraryItem, type MergeBlockReason } from "@/lib/library-merge";
 
 /** What the detail page's tracking Edit mode can change in one Save. */
 export interface TrackingUpdatePatch {
@@ -30,6 +31,12 @@ export interface TrackingUpdatePatch {
   progressValue?: number;
   playtimeHours?: number;
 }
+
+/** Stage 27 — outcome of a duplicate-merge attempt. See library-merge.ts's computeMergedLibraryItem for what "blocked" means, and README "Safe Duplicate Detection & Manual Merge" for the full flow. */
+export type MergeItemsResult =
+  | { status: "ok"; merged: MediaItem }
+  | { status: "blocked"; reason: MergeBlockReason }
+  | { status: "error"; reason: "not_found" | "network" };
 
 /**
  * Owns every LibraryItem mutation. Signed out (userId null/undefined), this
@@ -280,6 +287,64 @@ export function useLibraryItems(
     }
   }
 
+  /**
+   * Stage 27 — merges `duplicateId` into `survivorId` and removes the
+   * duplicate. Never automatic — only ever called from an explicit user
+   * confirmation (see README "Safe Duplicate Detection & Manual Merge").
+   *
+   * Cloud mode: the field-merge computation here is a PREVIEW only — the
+   * actual write happens inside the atomic merge_library_items RPC, which
+   * independently recomputes every progress-bearing field from whatever
+   * is actually in the database at lock time (never trusts this
+   * computation for those fields — see the RPC's own doc comment for
+   * why). A successful merge re-hydrates from the server rather than
+   * trying to replicate the RPC's exact result locally, so the client
+   * never ends up showing something the server didn't actually commit.
+   *
+   * Local mode: this hook IS authoritative (there's no server to defer
+   * to), so the computed merge is applied directly. Both the survivor
+   * update and the duplicate's removal happen in one synchronous state
+   * update — never two separate ones with an await in between — so there
+   * is no window where a page close could leave only one applied.
+   */
+  async function mergeItems(survivorId: string, duplicateId: string): Promise<MergeItemsResult> {
+    const survivor = items.find((item) => item.id === survivorId);
+    const duplicate = items.find((item) => item.id === duplicateId);
+    if (!survivor || !duplicate || !isMediaItem(survivor) || !isMediaItem(duplicate)) {
+      return { status: "error", reason: "not_found" };
+    }
+
+    const computation = computeMergedLibraryItem(survivor, duplicate);
+    if (computation.status === "blocked") return computation;
+
+    if (userId) {
+      const supabase = getSupabaseClient();
+      if (!supabase) return { status: "error", reason: "network" };
+      try {
+        const result = await mergeLibraryItems(supabase, survivorId, duplicateId, computation.merged, userId);
+        if (result.status !== "merged") {
+          // Only "unauthorized"/"not_found"/"type_mismatch" and the
+          // progress/catalog conflict statuses reach here — all are
+          // reported as "blocked" reasons except the two that mean the
+          // request itself couldn't be serviced.
+          if (result.status === "unauthorized" || result.status === "not_found") {
+            return { status: "error", reason: "not_found" };
+          }
+          return { status: "blocked", reason: result.status };
+        }
+        await hydrate();
+        return { status: "ok", merged: computation.merged };
+      } catch {
+        return { status: "error", reason: "network" };
+      }
+    }
+
+    setItems((current) =>
+      current.map((item) => (item.id === survivorId ? computation.merged : item)).filter((item) => item.id !== duplicateId),
+    );
+    return { status: "ok", merged: computation.merged };
+  }
+
   function addWebsite(values: WebsiteItemInput) {
     const normalized = { ...values, category: normalizeCategory(values.category, getUniqueCategories(items)) };
     const newItem: WebsiteItem = {
@@ -336,6 +401,7 @@ export function useLibraryItems(
     quickSetNovelProgress,
     updateTracking,
     deleteItem,
+    mergeItems,
     addWebsite,
     updateWebsite,
     addMedia,
