@@ -21,6 +21,7 @@ import {
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ItemCover } from "@/components/ItemCover";
 import { ItemTrackingSection } from "@/components/ItemTrackingSection";
+import { ItemTrackingSourcesSection } from "@/components/ItemTrackingSourcesSection";
 import { ItemMetadataRows } from "@/components/ItemMetadataRows";
 import { ItemCollectionsSection } from "@/components/ItemCollectionsSection";
 import { ItemActivitySection } from "@/components/ItemActivitySection";
@@ -227,6 +228,8 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
               onSaveTracking={library.updateTracking}
             />
           )}
+
+          {media && <ItemTrackingSourcesSection itemId={itemId} userId={userId} />}
 
           {media && <ItemMetadataRows rows={getCatalogMetadataRows(media)} />}
 

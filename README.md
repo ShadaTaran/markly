@@ -374,6 +374,26 @@ Reading and watching are different acts: opening a chapter's page *is* reading p
 
 **Not implemented (deliberately out of scope for this stage):** any real streaming-site adapter, automatic season-length calculation, cross-season AniList merging, specials/OVA reconciliation, and season editing in the detail page's lightweight "Your Tracking" quick-edit card (only the full Edit Details form exposes the Season field — see the module comment in `src/lib/extension/detected-item.ts`'s `buildDetectedTrackingValues` for why `CatalogTrackingForm`'s compact add-from-catalog flow was left untouched too).
 
+### Cross-Source Work Identity (Stage 26)
+
+The same work can be read/watched from more than one site — NovelPhoenix says Chapter 58, a different reader says Chapter 59. Both should point at one Markly item with one unified progress, without a fuzzy "these titles are probably the same work" merge step anywhere in the pipeline.
+
+**`tracking_sources` already supported this.** Phase 0 investigation found the only uniqueness constraint on the table is `(user_id, adapter_id, source_key)` — on *source* identity, never on `library_item_id`. Nothing has ever stopped two source rows from sharing one `library_item_id`. The existing atomic progress RPCs (`apply_extension_progress`, `apply_extension_season_episode_progress`) already lock and compare purely by `p_item_id`, oblivious to which source triggered the call — so two sources racing to update the same item already serialize correctly and the monotonic rule already picks the right winner. **No new "canonical work" table, and no RPC changes, were needed** — this stage is almost entirely about *exposing* an architecture that was already correct, not building a new one.
+
+**The one real gap: Unlink was practically useless.** A user explicitly unlinking a source only ever cleared `library_item_id` — the very next detection would run Smart Auto-Link, find the same exact-title match, and silently relink it right back. `tracking_sources.auto_link_suppressed_at` (new, `supabase/migrations/0008_stage26_source_management.sql`) is the minimal fix: set only by an explicit user Unlink (never by `clearBrokenLink`, which runs when a *linked item was deleted* — that case must stay free to auto-relink or Auto-Add normally), it makes `/api/extension/progress` skip Smart Auto-Link *and* Auto-Add entirely for that source until the user explicitly links it again (which clears the flag). `last_seen_at`/`last_detected_progress` keep updating normally throughout — only the automatic *linking decision* is suppressed.
+
+**Disabled-source enforcement already existed** (Stage 22) — `/api/extension/progress` already returns `tracking_disabled` before any linking or progress-commit logic runs whenever a linked source's `auto_track_enabled` is false. Stage 26 found no gap here; it only added the missing UI to actually flip the toggle (`POST /api/tracking-sources/toggle-auto-track` — `setAutoTrackEnabled` existed server-side since Stage 18 with no route ever calling it).
+
+**Friendly names, never raw ids.** `src/lib/extension/source-display.ts` maps a source to a human label — a known adapter's own `displayName` first (`MangaDex`), then the source's own hostname (`novelphoenix.com`, or the friendlier `NovelPhoenix` where that mapping is known), and only a raw `adapterId` (`universal-reader`, `markly-season-test`) as an absolute last resort when neither is available. The same module formats `last_detected_progress` for display — an unconfirmed video discovery (`confirmed: false`) reads as `"Detected: Season 2, Episode 3 (not completed)"`, never as if it were committed Library progress — and validates "Open Source" links (`getSafeOpenSourceUrl`, reusing `lib/website.ts`'s existing `isValidUrl` rather than reimplementing it): only `http`/`https`, never `javascript:`/`data:`/`file:`/malformed.
+
+**Item detail page** gets a new Tracking Sources section (`ItemTrackingSourcesSection.tsx`) answering "where is Markly tracking this from?" without opening Settings — fetches only this item's sources (`GET /api/tracking-sources?libraryItemId=…`, a new targeted query, `listSourcesForItem`) rather than every source the user has, and renders nothing at all when there are none (no empty-card clutter) or when signed out (tracking sources are an entirely cloud/extension concept with no local-mode equivalent).
+
+**Settings > Auto Tracking** now groups linked sources under the LibraryItem they share (`groupLinkedSources`) instead of one flat list, so "2 sources" under one title is visible at a glance; unlinked sources keep the exact same "needs attention" flow as before, untouched, in their own section.
+
+**Bugfix (self-caught, cross-stage).** Both `GET /api/tracking-sources` and `settings/tracking/page.tsx` mapped `last_detected_progress` without its `season` field — a Stage 25 gap this stage's own source-display work surfaced: a seasonal source's progress silently lost its season on the Settings page even though the underlying column always had it. Fixed at both call sites.
+
+**Not implemented (deliberately out of scope for this stage):** a "Forget/delete source" action (Unlink already covers "stop associating this source," and nothing in the current product needs the source row itself gone — documented here rather than added speculatively); Activity attribution by source (`"via NovelPhoenix"`) — would need a new parameter threaded through the already-live `apply_extension_progress`/`apply_extension_season_episode_progress` RPCs for a display-only enhancement the spec explicitly allowed skipping; identifier-based (non-title) matching improvements — no adapter or the universal engine currently exposes an authoritative work identifier at all (MangaDex's UUID is folded into `sourceKey`, never surfaced separately), so there is nothing yet for this to attach to.
+
 ## Project Structure
 
 ```
@@ -425,6 +445,10 @@ scripts/
   verify-season-tracking.mjs  Standalone check for the season+episode comparison RPC, season-aware
                   Auto-Add/Activity/quick-increment behavior, and AniList isolation (see "Season-Aware
                   Episode Tracking" above) — run with `node scripts/verify-season-tracking.mjs`
+  verify-source-management.mjs  Standalone check for cross-source progress (two sources, one item),
+                  the manual-unlink auto-link-suppression logic, disabled-source enforcement, and the
+                  friendly-name/progress-formatting/Open-Source-safety display helpers (see
+                  "Cross-Source Work Identity" above) — run with `node scripts/verify-source-management.mjs`
 supabase/
   migrations/     SQL schema + Row Level Security policies for the optional Supabase backend
 extension/

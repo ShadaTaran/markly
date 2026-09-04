@@ -138,6 +138,19 @@ export async function POST(request: Request) {
     let autoLinked = false;
     let autoAdded = false;
 
+    // Stage 26 — an explicit, user-initiated Unlink (never an automatic
+    // one, e.g. from a deleted item — see clearBrokenLink) sets this, and
+    // it stays set until the user explicitly links the source again. A
+    // source in this state is deliberately left alone here: no Smart
+    // Auto-Link (which would just silently relink it to the same item the
+    // user just chose to disconnect it from) and no Auto-Add (which would
+    // create a duplicate item for the same exact title). recordDetection
+    // above still ran, so last_seen_at/last_detected_progress stay
+    // current — only the automatic linking decision is suppressed.
+    if (!libraryItemId && existing?.auto_link_suppressed_at) {
+      return NextResponse.json({ status: "needs_link", reason: "no_match" });
+    }
+
     if (!libraryItemId) {
       // No established mapping yet — either a brand-new source, or one
       // detected before this feature existed (previously stuck at
@@ -166,6 +179,9 @@ export async function POST(request: Request) {
           mediaType,
           libraryItemId: null,
           autoTrackEnabled: true,
+          // Reaching this branch already required existing?.auto_link_suppressed_at
+          // to be falsy (see the check just above) — so this is always accurate here.
+          autoLinkSuppressed: false,
           // confirmed: false here is what stops buildDetectedMediaInput
           // (called inside attemptAutoAdd) from baking an unwatched
           // episode number into the item this creates — see its own doc

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
@@ -8,17 +8,20 @@ import { insertActivityEvent } from "@/lib/cloud/activity";
 import { isMediaItem } from "@/lib/item-detail";
 import { createMediaItem, getUniqueCategories, normalizeCategory } from "@/lib/library-items";
 import { generateId } from "@/lib/utils";
+import { formatRelativeTime } from "@/lib/activity-format";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import type { MediaItem, MediaItemInput } from "@/types/library-item";
 import type { DeviceSummary } from "@/lib/extension/devices";
 import type { TrackingSourceSummary } from "@/lib/extension/types";
 import { buildDetectedMediaInput, buildDetectedTrackingValues } from "@/lib/extension/detected-item";
+import { getSafeOpenSourceUrl, getSourceDisplayName, getSourceHostname, formatSourceProgress } from "@/lib/extension/source-display";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import type { DetectedFallback } from "@/components/MetadataSearchPanel";
 import { Dialog } from "@/components/Dialog";
 import { MediaItemForm } from "@/components/MediaItemForm";
 import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import type { MetadataDetails } from "@/lib/metadata/types";
+import { ExternalLinkIcon } from "@/components/icons";
 
 interface TrackingSettingsPanelProps {
   initialDevices: DeviceSummary[];
@@ -37,26 +40,27 @@ function formatRelative(iso: string | null): string {
   return `${days}d ago`;
 }
 
-function hostnameFromSourceUrl(sourceUrl: string | null): string {
-  if (!sourceUrl) return "the detected page";
-  try {
-    return new URL(sourceUrl).hostname;
-  } catch {
-    return "the detected page";
-  }
+/** Stage 26 — a group of tracking sources that all point at the same LibraryItem (see README "Cross-Source Work Identity"). */
+interface SourceGroup {
+  itemId: string;
+  itemTitle: string;
+  sources: TrackingSourceSummary[];
 }
 
-function progressLabel(progress: TrackingSourceSummary["lastDetectedProgress"]): string {
-  if (!progress) return "—";
-  if (progress.kind === "season_episode") {
-    return progress.season !== undefined ? `Season ${progress.season}, Episode ${progress.value}` : `Episode ${progress.value}`;
+function groupLinkedSources(sources: TrackingSourceSummary[], libraryItems: MediaItem[] | null): SourceGroup[] {
+  const groups = new Map<string, SourceGroup>();
+  for (const source of sources) {
+    if (!source.libraryItemId) continue;
+    const itemId = source.libraryItemId;
+    const existing = groups.get(itemId);
+    if (existing) {
+      existing.sources.push(source);
+      continue;
+    }
+    const itemTitle = libraryItems?.find((item) => item.id === itemId)?.title ?? "Markly item";
+    groups.set(itemId, { itemId, itemTitle, sources: [source] });
   }
-  if (progress.kind === "episode") return `Episode ${progress.value}`;
-  if (progress.kind === "chapter") return `Chapter ${progress.value}`;
-  if (progress.kind === "page") return `Page ${progress.value}`;
-  if (progress.kind === "percent") return `${progress.value}%`;
-  if (progress.kind === "playtime") return `${progress.value}h`;
-  return `${progress.kind} ${progress.value}`;
+  return Array.from(groups.values()).sort((a, b) => a.itemTitle.localeCompare(b.itemTitle, undefined, { sensitivity: "base" }));
 }
 
 export function TrackingSettingsPanel({ initialDevices, initialSources }: TrackingSettingsPanelProps) {
@@ -73,6 +77,26 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const [addLinkSource, setAddLinkSource] = useState<TrackingSourceSummary | null>(null);
   const [addDialogState, setAddDialogState] = useState<DialogState>(null);
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
+
+  // Stage 26 — loaded eagerly (rather than only on first "Add or Link"
+  // click, as before) so linked sources can be grouped under their real
+  // LibraryItem title immediately, without a "Markly item" placeholder
+  // flashing first. A ref (not `libraryItems` state) guards against
+  // re-fetching, so this effect's own dependency list stays exhaustive
+  // with no suppression needed. openLinkPicker's own fetch below still
+  // runs — it's a no-op once this wins the race (same ref guard), and a
+  // fallback if a user clicks before this resolves.
+  const libraryItemsFetchStarted = useRef(false);
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId || libraryItemsFetchStarted.current) return;
+    libraryItemsFetchStarted.current = true;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    fetchLibraryItems(supabase, userId)
+      .then((items) => setLibraryItems(items.filter(isMediaItem)))
+      .catch(() => setError("Couldn't load your library."));
+  }, [user?.id]);
 
   async function generateCode() {
     setBusy("pairing-code");
@@ -142,7 +166,8 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   async function openLinkPicker(sourceId: string) {
     setLinkingSourceId(sourceId);
     setItemFilter("");
-    if (libraryItems || !user) return;
+    if (libraryItemsFetchStarted.current || !user) return;
+    libraryItemsFetchStarted.current = true;
     const supabase = getSupabaseClient();
     if (!supabase) return;
     try {
@@ -166,7 +191,9 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
         setError("Couldn't link that item. Try again.");
         return;
       }
-      setSources((current) => current.map((source) => (source.id === sourceId ? { ...source, libraryItemId } : source)));
+      setSources((current) =>
+        current.map((source) => (source.id === sourceId ? { ...source, libraryItemId, autoLinkSuppressed: false } : source)),
+      );
       setLinkingSourceId(null);
     } catch {
       setError("Couldn't link that item. Try again.");
@@ -320,9 +347,31 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
         setError("Couldn't unlink that source. Try again.");
         return;
       }
-      setSources((current) => current.map((source) => (source.id === sourceId ? { ...source, libraryItemId: null } : source)));
+      setSources((current) =>
+        current.map((source) => (source.id === sourceId ? { ...source, libraryItemId: null, autoLinkSuppressed: true } : source)),
+      );
     } catch {
       setError("Couldn't unlink that source. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Stage 26 — the auto_track_enabled toggle already existed server-side (Stage 18/22); this is the first UI that lets a user actually flip it. */
+  async function toggleAutoTrack(sourceId: string, enabled: boolean) {
+    setBusy(`toggle-${sourceId}`);
+    setError(undefined);
+    setSources((current) => current.map((source) => (source.id === sourceId ? { ...source, autoTrackEnabled: enabled } : source)));
+    try {
+      const response = await fetch("/api/tracking-sources/toggle-auto-track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId, enabled }),
+      });
+      if (!response.ok) throw new Error("failed");
+    } catch {
+      setSources((current) => current.map((source) => (source.id === sourceId ? { ...source, autoTrackEnabled: !enabled } : source)));
+      setError("Couldn't update that setting. Try again.");
     } finally {
       setBusy(null);
     }
@@ -336,8 +385,8 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const detectedFallback: DetectedFallback | undefined = addLinkSource
     ? {
         title: addLinkSource.sourceTitle,
-        sourceLabel: hostnameFromSourceUrl(addLinkSource.sourceUrl),
-        progressLabel: addLinkSource.lastDetectedProgress ? progressLabel(addLinkSource.lastDetectedProgress) : undefined,
+        sourceLabel: getSourceDisplayName(addLinkSource.adapterId, addLinkSource.sourceUrl),
+        progressLabel: addLinkSource.lastDetectedProgress ? formatSourceProgress(addLinkSource.lastDetectedProgress) : undefined,
         coverUrl: addLinkSource.lastDetectedMetadata?.coverUrl,
         onAddAndTrack: handleAddDetectedWork,
         onEditDetails: openEditDetails,
@@ -354,6 +403,13 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const initialTrackingForAdd: PersonalTrackingValues | undefined = addLinkSource
     ? { status: "in_progress", ...buildDetectedTrackingValues(addLinkSource.mediaType, addLinkSource.lastDetectedProgress) }
     : undefined;
+
+  // Stage 26 — linked sources are grouped under the one LibraryItem they
+  // all point at (see README "Cross-Source Work Identity"); unlinked ones
+  // keep the existing flat "needs attention" flow unchanged (Section 24 of
+  // the Stage 26 spec — that flow must remain exactly as it was).
+  const linkedGroups = groupLinkedSources(sources, libraryItems);
+  const unlinkedSources = sources.filter((source) => !source.libraryItemId);
 
   return (
     <div className="space-y-6">
@@ -463,100 +519,157 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
             Nothing detected yet. Sources appear here once the extension sees a supported page.
           </p>
         ) : (
-          <ul className="mt-3 space-y-2">
-            {sources.map((source) => {
-              const linkedItem = source.libraryItemId ? libraryItems?.find((item) => item.id === source.libraryItemId) : undefined;
-              const compatibleItems = (libraryItems ?? []).filter((item) => item.type === source.mediaType);
-              const filteredItems = compatibleItems.filter((item) => item.title.toLowerCase().includes(itemFilter.toLowerCase()));
-
-              return (
-                <li key={source.id} className="rounded-md border border-border p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{source.sourceTitle}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {ITEM_TYPE_LABELS[source.mediaType]} · {progressLabel(source.lastDetectedProgress)} · Seen {formatRelative(source.lastSeenAt)}
-                      </p>
+          <div className="mt-3 space-y-5">
+            {linkedGroups.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Linked</h3>
+                {linkedGroups.map((group) => (
+                  <div key={group.itemId} className="rounded-md border border-border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground">{group.itemTitle}</p>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {group.sources.length} source{group.sources.length === 1 ? "" : "s"}
+                      </span>
                     </div>
-                  </div>
-
-                  {source.libraryItemId ? (
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-sm text-muted-foreground">
-                        Linked to: <span className="text-foreground">{linkedItem?.title ?? "Markly item"}</span>
-                        <span className="ml-2 text-xs">Auto tracking: {source.autoTrackEnabled ? "On" : "Off"}</span>
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => unlinkSource(source.id)}
-                        disabled={busy !== null}
-                        className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
-                      >
-                        {busy === `unlink-${source.id}` ? "Unlinking…" : "Unlink"}
-                      </button>
-                    </div>
-                  ) : linkingSourceId === source.id ? (
-                    <div className="mt-2 space-y-2">
-                      <input
-                        type="text"
-                        value={itemFilter}
-                        onChange={(event) => setItemFilter(event.target.value)}
-                        placeholder={`Search your ${ITEM_TYPE_LABELS[source.mediaType]} items…`}
-                        className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/25"
-                      />
-                      {libraryItems === null ? (
-                        <p className="text-xs text-muted-foreground">Loading your library…</p>
-                      ) : filteredItems.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">No matching {ITEM_TYPE_LABELS[source.mediaType]} items.</p>
-                      ) : (
-                        <ul className="max-h-48 space-y-1 overflow-y-auto">
-                          {filteredItems.map((item) => (
-                            <li key={item.id}>
+                    <ul className="mt-2 space-y-2">
+                      {group.sources.map((source) => {
+                        const hostname = getSourceHostname(source.sourceUrl);
+                        const openUrl = getSafeOpenSourceUrl(source);
+                        return (
+                          <li key={source.id} className="rounded-md border border-border p-2.5">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-foreground">
+                                {getSourceDisplayName(source.adapterId, source.sourceUrl)}
+                              </p>
+                              {hostname && <p className="truncate text-xs text-muted-foreground">{hostname}</p>}
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              Auto Tracking: {source.autoTrackEnabled ? "On" : "Off"}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-3">
+                              {openUrl && (
+                                <a
+                                  href={openUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+                                >
+                                  <ExternalLinkIcon width={12} height={12} />
+                                  Open Source
+                                </a>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => linkItem(source.id, item.id)}
+                                onClick={() => toggleAutoTrack(source.id, !source.autoTrackEnabled)}
                                 disabled={busy !== null}
-                                className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:opacity-60"
+                                className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
                               >
-                                {item.title}
+                                {busy === `toggle-${source.id}` ? "Updating…" : source.autoTrackEnabled ? "Disable" : "Enable"}
                               </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => openAddLinkDialog(source)}
-                          className="text-xs font-medium text-accent hover:underline"
-                        >
-                          Not in the list? Search the catalog to add it
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setLinkingSourceId(null)}
-                          className="shrink-0 text-xs font-medium text-muted-foreground hover:text-foreground"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-xs text-muted-foreground">Not linked</p>
-                      <button
-                        type="button"
-                        onClick={() => openLinkPicker(source.id)}
-                        className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
-                      >
-                        Add or Link
-                      </button>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                              <button
+                                type="button"
+                                onClick={() => unlinkSource(source.id)}
+                                disabled={busy !== null}
+                                className="text-xs font-medium text-muted-foreground transition-colors hover:text-danger disabled:opacity-60"
+                              >
+                                {busy === `unlink-${source.id}` ? "Unlinking…" : "Unlink"}
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {unlinkedSources.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Unlinked</h3>
+                <ul className="space-y-2">
+                  {unlinkedSources.map((source) => {
+                    const compatibleItems = (libraryItems ?? []).filter((item) => item.type === source.mediaType);
+                    const filteredItems = compatibleItems.filter((item) => item.title.toLowerCase().includes(itemFilter.toLowerCase()));
+
+                    return (
+                      <li key={source.id} className="rounded-md border border-border p-3">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{source.sourceTitle}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {getSourceDisplayName(source.adapterId, source.sourceUrl)} · {ITEM_TYPE_LABELS[source.mediaType]} ·{" "}
+                            {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
+                          </p>
+                        </div>
+
+                        {linkingSourceId === source.id ? (
+                          <div className="mt-2 space-y-2">
+                            <input
+                              type="text"
+                              value={itemFilter}
+                              onChange={(event) => setItemFilter(event.target.value)}
+                              placeholder={`Search your ${ITEM_TYPE_LABELS[source.mediaType]} items…`}
+                              className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/25"
+                            />
+                            {libraryItems === null ? (
+                              <p className="text-xs text-muted-foreground">Loading your library…</p>
+                            ) : filteredItems.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No matching {ITEM_TYPE_LABELS[source.mediaType]} items.</p>
+                            ) : (
+                              <ul className="max-h-48 space-y-1 overflow-y-auto">
+                                {filteredItems.map((item) => (
+                                  <li key={item.id}>
+                                    <button
+                                      type="button"
+                                      onClick={() => linkItem(source.id, item.id)}
+                                      disabled={busy !== null}
+                                      className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-hover disabled:opacity-60"
+                                    >
+                                      {item.title}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="flex items-center justify-between gap-3">
+                              <button
+                                type="button"
+                                onClick={() => openAddLinkDialog(source)}
+                                className="text-xs font-medium text-accent hover:underline"
+                              >
+                                Not in the list? Search the catalog to add it
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLinkingSourceId(null)}
+                                className="shrink-0 text-xs font-medium text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <p className="text-xs text-muted-foreground">Not linked</p>
+                            <button
+                              type="button"
+                              onClick={() => openLinkPicker(source.id)}
+                              className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
+                            >
+                              Add or Link
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </section>
 

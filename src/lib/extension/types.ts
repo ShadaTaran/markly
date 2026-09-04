@@ -14,4 +14,6 @@ export interface TrackingSourceSummary {
   /** Optional safe enrichment metadata from the most recent detection (see README "Metadata Enrichment") — stored alongside lastDetectedProgress in the same DB column, presented here as its own field. */
   lastDetectedMetadata?: DetectedMetadata;
   lastSeenAt: string;
+  /** Stage 26 — true only right after an explicit user Unlink; see tracking_sources.auto_link_suppressed_at and README "Cross-Source Work Identity". */
+  autoLinkSuppressed: boolean;
 }

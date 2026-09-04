@@ -49,6 +49,8 @@ export interface TrackingSourceRow {
   last_seen_at: string;
   created_at: string;
   updated_at: string;
+  /** Stage 26 — see migrations/0008's own comment. Non-null means an explicit user Unlink is still in effect for this source. */
+  auto_link_suppressed_at: string | null;
 }
 
 export interface DetectionInput {
@@ -177,23 +179,57 @@ export async function listSources(supabase: SupabaseClient, userId: string): Pro
 }
 
 /**
+ * Session-authenticated (RLS-scoped) — the targeted query the item detail
+ * page's Tracking Sources section uses instead of fetching every one of
+ * the user's sources and filtering client-side (see README "Cross-Source
+ * Work Identity" — avoiding N+1/over-fetching was an explicit Stage 26
+ * requirement).
+ */
+export async function listSourcesForItem(supabase: SupabaseClient, userId: string, libraryItemId: string): Promise<TrackingSourceRow[]> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("user_id", userId)
+    .eq("library_item_id", libraryItemId)
+    .order("last_seen_at", { ascending: false })
+    .returns<TrackingSourceRow[]>();
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
  * Session-authenticated (RLS-scoped) — the RLS policy's WITH CHECK
  * independently re-verifies libraryItemId belongs to this user, so this
  * is defense in depth, not the only enforcement.
+ *
+ * Stage 26 — always clears auto_link_suppressed_at: any deliberate,
+ * explicit "link this" action (the inline picker, or re-choosing the same
+ * item via Add or Link) is exactly the user-intent signal that should
+ * restore normal automatic behavior for this source, regardless of
+ * whether it was previously suppressed.
  */
 export async function linkSource(supabase: SupabaseClient, userId: string, sourceId: string, libraryItemId: string): Promise<void> {
   const { error } = await supabase
     .from(TABLE)
-    .update({ library_item_id: libraryItemId, updated_at: new Date().toISOString() })
+    .update({ library_item_id: libraryItemId, auto_link_suppressed_at: null, updated_at: new Date().toISOString() })
     .eq("id", sourceId)
     .eq("user_id", userId);
   if (error) throw error;
 }
 
+/**
+ * Stage 26 — also records that this was an explicit, user-initiated
+ * unlink (auto_link_suppressed_at), so the next detection through
+ * /api/extension/progress doesn't immediately run Smart Auto-Link/Auto-Add
+ * and silently relink (or duplicate) it right back — see route.ts and
+ * migrations/0008's own comment. clearBrokenLink (a *deleted item*
+ * unlinking its sources automatically) deliberately does not set this —
+ * only a real user action does.
+ */
 export async function unlinkSource(supabase: SupabaseClient, userId: string, sourceId: string): Promise<void> {
   const { error } = await supabase
     .from(TABLE)
-    .update({ library_item_id: null, updated_at: new Date().toISOString() })
+    .update({ library_item_id: null, auto_link_suppressed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", sourceId)
     .eq("user_id", userId);
   if (error) throw error;

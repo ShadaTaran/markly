@@ -54,11 +54,21 @@ export default async function TrackingPage() {
           mediaType: row.media_type,
           libraryItemId: row.library_item_id,
           autoTrackEnabled: row.auto_track_enabled,
+          // Stage 26 bugfix: `season` was previously dropped here too (see
+          // the identical fix in /api/tracking-sources/route.ts) — a
+          // seasonal source's progress silently lost its season on this
+          // page even though the column always had it.
           lastDetectedProgress: row.last_detected_progress
-            ? { kind: row.last_detected_progress.kind, value: row.last_detected_progress.value, confirmed: row.last_detected_progress.confirmed }
+            ? {
+                kind: row.last_detected_progress.kind,
+                value: row.last_detected_progress.value,
+                season: row.last_detected_progress.season,
+                confirmed: row.last_detected_progress.confirmed,
+              }
             : null,
           lastDetectedMetadata: row.last_detected_progress?.metadata,
           lastSeenAt: row.last_seen_at,
+          autoLinkSuppressed: row.auto_link_suppressed_at !== null,
         }))}
       />
     </SettingsShell>

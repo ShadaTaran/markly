@@ -1,5 +1,6 @@
 import type { TrackingAdapter } from "./types";
 import { marklyTestReaderAdapter } from "./markly-test-reader";
+import { marklyTestReaderBAdapter } from "./markly-test-reader-b";
 import { mangadexAdapter } from "./mangadex";
 import { marklySeasonTestAdapter } from "./markly-season-test";
 
@@ -9,7 +10,12 @@ import { marklySeasonTestAdapter } from "./markly-season-test";
  * nothing in background/content/popup needs to change, and nothing here
  * needs to change in them either.
  */
-export const adapters: readonly TrackingAdapter[] = [marklyTestReaderAdapter, mangadexAdapter, marklySeasonTestAdapter];
+export const adapters: readonly TrackingAdapter[] = [
+  marklyTestReaderAdapter,
+  marklyTestReaderBAdapter,
+  mangadexAdapter,
+  marklySeasonTestAdapter,
+];
 
 export function findMatchingAdapter(url: URL): TrackingAdapter | null {
   return adapters.find((adapter) => adapter.matches(url)) ?? null;

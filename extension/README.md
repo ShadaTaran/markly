@@ -338,6 +338,35 @@ this stage deliberately doesn't add (no generic season parsing was added
 to universal detection either — no real-world evidence backs a generic
 season URL/heading shape the way Stage 23's chapter/episode patterns had).
 
+## Cross-source work identity (Stage 26)
+
+No extension-side changes were needed for the core cross-source model —
+`tracking_sources`' one uniqueness constraint (`user_id` + `adapter_id` +
+`source_key`) was already scoped to *source* identity, never
+`library_item_id`, so two adapters detecting the same work already link to
+one Markly item with no extension code aware of it either way.
+
+`markly-test-reader-b.ts` is a new, permanent, narrowly-scoped dev-only
+adapter — a second, independent `TrackingAdapter` (distinct `adapterId`,
+so a genuinely distinct `tracking_sources` row, never pretending to be
+NovelPhoenix's own hostname/URL) that reads a second dev harness page
+(`/dev/reader-test-b` in the main app) and, by default, reports the exact
+same work title as the real NovelPhoenix source it's meant to be tested
+alongside — "Lord of the Mysteries," WITH "the"
+(`https://novelphoenix.com/novel/lord-of-the-mysteries`) — deliberately
+NOT the unrelated, pre-Stage-26 `/dev/reader-test` fixture's own "Lord of
+Mysteries" (no "the"), which stays a genuinely different title on purpose.
+This proves the "Source A / Source B, same work" scenario live — Smart
+Auto-Link's existing exact-title matching already links both to one
+LibraryItem — without adding a second real site (see the root README's
+"Cross-Source Work Identity" for why no real second provider was needed).
+
+Server-side, one new behavior: a source that was explicitly Unlinked by
+the user (`tracking_sources.auto_link_suppressed_at` set) is skipped
+entirely by `/api/extension/progress`'s Smart Auto-Link/Auto-Add logic —
+the extension sends detections exactly as before either way; this is a
+main-app-only change (`route.ts`), invisible to the extension's own code.
+
 ## Security notes for contributors
 
 - The device token lives only in `chrome.storage.local`, restricted to
