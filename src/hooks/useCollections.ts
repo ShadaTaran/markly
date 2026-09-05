@@ -228,6 +228,18 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     );
   }
 
+  /**
+   * Stage 29 — local mode only: replaces the entire collections array in
+   * one synchronous update, used by backup import. See
+   * useLibraryItems.replaceAllLocal's doc comment for why this exists and
+   * why it must be called in the same synchronous batch as the other two
+   * stores' equivalents.
+   */
+  function replaceAllLocal(newCollections: Collection[]) {
+    if (userId) return;
+    setCollections(newCollections);
+  }
+
   function deleteCollection(id: string) {
     setCollections((current) => current.filter((collection) => collection.id !== id));
 
@@ -253,6 +265,7 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     mergeItemReferences,
     restoreMembershipsForItem,
     restoreMembershipsForMerge,
+    replaceAllLocal,
     reload: hydrate,
   };
 }

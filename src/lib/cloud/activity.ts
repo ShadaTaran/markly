@@ -70,7 +70,8 @@ export function toActivityEventRow(event: ActivityEvent, userId: string): Activi
   };
 }
 
-function fromActivityEventRow(row: ActivityEventRow): ActivityEvent | null {
+/** Exported for lib/cloud/backup.ts, which needs the SAME row mapping but without this module's MAX_ACTIVITY_EVENTS UI-display cap (a backup must include full history, not just what the Recent Activity panel shows — see that module's doc comment). */
+export function fromActivityEventRow(row: ActivityEventRow): ActivityEvent | null {
   const data: EventData = row.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : {};
   const base = { id: row.id, itemId: row.item_id, timestamp: row.created_at };
 

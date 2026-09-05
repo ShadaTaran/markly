@@ -167,6 +167,25 @@ export function useActivity(userId?: string | null) {
     );
   }
 
+  /**
+   * Stage 29 — local mode only: replaces the entire events array in one
+   * synchronous update, used by backup import. See
+   * useLibraryItems.replaceAllLocal's doc comment. Does NOT itself enforce
+   * MAX_ACTIVITY_EVENTS — the caller (apply-local.ts's
+   * `applyImportPlanLocally`, via `computeLocalActivityRetention`) is
+   * responsible for handing this an array already at or under capacity,
+   * chronologically trimmed, BEFORE calling this. Relying on the
+   * persistence effect's own blind `.slice(0, N)` to do that trimming
+   * after the fact would silently drop whatever landed past position N
+   * regardless of how recent it actually was, and would let the Import
+   * Result UI report a restored count larger than what survives — exactly
+   * the "restored then disappears" bug Stage 29 Part B fixed.
+   */
+  function replaceAllLocal(newEvents: ActivityEvent[]) {
+    if (userId) return;
+    setEvents(newEvents);
+  }
+
   return {
     events,
     isHydrated,
@@ -177,6 +196,7 @@ export function useActivity(userId?: string | null) {
     reassignEventsForItem,
     restoreEventsForItem,
     restoreEventsForMerge,
+    replaceAllLocal,
     reload: hydrate,
   };
 }

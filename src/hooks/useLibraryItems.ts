@@ -304,6 +304,22 @@ export function useLibraryItems(
   }
 
   /**
+   * Stage 29 — local mode only: replaces the entire items array in one
+   * synchronous update, used by backup import (lib/backup/apply-local.ts
+   * builds the complete resulting array — current items plus newly
+   * imported ones — in memory first; this just commits it). Paired with
+   * useCollections/useActivity's own replaceAllLocal, called together in
+   * the same event handler so all three stores land in one render, for
+   * the same reason Stage 27's merge ordering fix matters: no
+   * intermediate state where one store references something another
+   * hasn't caught up to yet.
+   */
+  function replaceAllLocal(newItems: LibraryItem[]) {
+    if (userId) return;
+    setItems(newItems);
+  }
+
+  /**
    * Stage 27 — merges `duplicateId` into `survivorId` and removes the
    * duplicate. Never automatic — only ever called from an explicit user
    * confirmation (see README "Safe Duplicate Detection & Manual Merge").
@@ -434,6 +450,7 @@ export function useLibraryItems(
     updateTracking,
     deleteItem,
     restoreDeletedItem,
+    replaceAllLocal,
     mergeItems,
     restoreMergedItems,
     addWebsite,

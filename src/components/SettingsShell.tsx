@@ -8,6 +8,7 @@ const SETTINGS_NAV = [
   { id: "connections", label: "Connections", href: "/settings/connections" },
   { id: "tracking", label: "Auto Tracking", href: "/settings/tracking" },
   { id: "recovery", label: "Recently Changed", href: "/settings/recovery" },
+  { id: "backup", label: "Data & Backup", href: "/settings/backup" },
 ] as const;
 
 interface SettingsShellProps {
