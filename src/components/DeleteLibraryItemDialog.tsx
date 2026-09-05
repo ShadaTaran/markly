@@ -20,7 +20,7 @@ export function DeleteLibraryItemDialog({
       widthClassName="max-w-sm"
     >
       <p className="text-sm text-muted-foreground">
-        This item will be removed. This action cannot be undone.
+        This item will be removed. You&rsquo;ll have a short window to undo this afterward, but treat it as final.
       </p>
       <div className="mt-5 flex items-center justify-end gap-2">
         <button

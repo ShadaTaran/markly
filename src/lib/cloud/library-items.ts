@@ -232,11 +232,6 @@ export async function upsertLibraryItem(supabase: SupabaseClient, item: LibraryI
   if (error) throw error;
 }
 
-export async function deleteLibraryItemRow(supabase: SupabaseClient, id: string): Promise<void> {
-  const { error } = await supabase.from("library_items").delete().eq("id", id);
-  if (error) throw error;
-}
-
 export type MergeLibraryItemsStatus =
   | "merged"
   | "unauthorized"
@@ -249,6 +244,8 @@ export type MergeLibraryItemsStatus =
 
 export interface MergeLibraryItemsResult {
   status: MergeLibraryItemsStatus;
+  /** Stage 28 — present only when status is "merged". Id of the library_recovery_actions row this merge created in the same transaction; pass it to undoLibraryRecovery (cloud/recovery.ts) to reverse it within its 15-minute window. */
+  recoveryId?: string;
 }
 
 const MERGE_STATUSES: readonly MergeLibraryItemsStatus[] = [
@@ -264,14 +261,19 @@ const MERGE_STATUSES: readonly MergeLibraryItemsStatus[] = [
 
 function parseMergeResult(data: unknown): MergeLibraryItemsResult | null {
   if (!data || typeof data !== "object") return null;
-  const status = (data as Record<string, unknown>).status;
+  const record = data as Record<string, unknown>;
+  const status = record.status;
   if (typeof status !== "string" || !(MERGE_STATUSES as readonly string[]).includes(status)) return null;
-  return { status: status as MergeLibraryItemsStatus };
+  const recoveryId = typeof record.recoveryId === "string" ? record.recoveryId : undefined;
+  return { status: status as MergeLibraryItemsStatus, recoveryId };
 }
 
 /**
- * Calls the atomic merge_library_items RPC (see
- * supabase/migrations/0009_stage27_merge_library_items.sql). `mergedItem`
+ * Calls the atomic merge_library_items RPC (originally
+ * supabase/migrations/0009_stage27_merge_library_items.sql; redefined in
+ * 0010_stage28_library_recovery.sql with the same signature and every 0009
+ * behavior preserved, additionally capturing a recovery snapshot in the
+ * same transaction — see that migration's doc comment). `mergedItem`
  * is the client's already-reviewed field-merge computation
  * (src/lib/library-merge.ts's computeMergedLibraryItem) — trusted for
  * title/description/tags/genres/cover/catalogSource/etc., but the RPC

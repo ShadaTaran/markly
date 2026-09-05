@@ -19,7 +19,7 @@ import { diffMediaTrackingEvents } from "@/lib/activity-events";
 import { isMediaItem } from "@/lib/item-detail";
 import { autoAdvanceStatus } from "@/lib/tracking";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { deleteLibraryItemRow, fetchLibraryItems, mergeLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
+import { fetchLibraryItems, mergeLibraryItems, upsertLibraryItem } from "@/lib/cloud/library-items";
 import { computeMergedLibraryItem, type MergeBlockReason } from "@/lib/library-merge";
 
 /** What the detail page's tracking Edit mode can change in one Save. */
@@ -34,7 +34,7 @@ export interface TrackingUpdatePatch {
 
 /** Stage 27 — outcome of a duplicate-merge attempt. See library-merge.ts's computeMergedLibraryItem for what "blocked" means, and README "Safe Duplicate Detection & Manual Merge" for the full flow. */
 export type MergeItemsResult =
-  | { status: "ok"; merged: MediaItem }
+  | { status: "ok"; merged: MediaItem; recoveryId?: string }
   | { status: "blocked"; reason: MergeBlockReason }
   | { status: "error"; reason: "not_found" | "network" };
 
@@ -278,13 +278,29 @@ export function useLibraryItems(
     persistUpsert(updated);
   }
 
+  /**
+   * Stage 28 — local mode only: removes an item from local state.
+   * Cloud-mode deletion goes through deleteLibraryItemWithRecovery
+   * (cloud/recovery.ts, called from recovery-orchestration.ts) at the call
+   * site instead of here, since that RPC snapshots everything in the same
+   * transaction as the delete — a plain delete here would forfeit Undo.
+   * No-ops when signed in so a stray call can't bypass that.
+   */
   function deleteItem(id: string) {
+    if (userId) return;
     setItems((current) => current.filter((item) => item.id !== id));
+  }
 
-    if (userId) {
-      const supabase = getSupabaseClient();
-      if (supabase) persistCloudChange(deleteLibraryItemRow(supabase, id));
-    }
+  /**
+   * Stage 28 — local mode only: reinserts a previously deleted item
+   * exactly as it was recorded (same id and every field), used by Undo.
+   * The caller (lib/recovery-orchestration.ts) has already validated via
+   * lib/library-recovery.ts's validateDeleteUndo that the id is still free
+   * before this is ever invoked.
+   */
+  function restoreDeletedItem(item: LibraryItem) {
+    if (userId) return;
+    setItems((current) => [item, ...current]);
   }
 
   /**
@@ -333,7 +349,7 @@ export function useLibraryItems(
           return { status: "blocked", reason: result.status };
         }
         await hydrate();
-        return { status: "ok", merged: computation.merged };
+        return { status: "ok", merged: computation.merged, recoveryId: result.recoveryId };
       } catch {
         return { status: "error", reason: "network" };
       }
@@ -343,6 +359,22 @@ export function useLibraryItems(
       current.map((item) => (item.id === survivorId ? computation.merged : item)).filter((item) => item.id !== duplicateId),
     );
     return { status: "ok", merged: computation.merged };
+  }
+
+  /**
+   * Stage 28 — local mode only: reverses a merge — recreates the duplicate
+   * exactly as it was pre-merge and restores the survivor to its exact
+   * pre-merge row. Used by Undo; the caller (recovery-orchestration.ts)
+   * has already validated via library-recovery.ts's validateMergeUndo
+   * (in particular, that the survivor is unchanged since the merge) before
+   * this is ever invoked.
+   */
+  function restoreMergedItems(survivorId: string, survivorPreMerge: MediaItem, duplicatePreMerge: MediaItem) {
+    if (userId) return;
+    setItems((current) => [
+      duplicatePreMerge,
+      ...current.map((item) => (item.id === survivorId ? survivorPreMerge : item)),
+    ]);
   }
 
   function addWebsite(values: WebsiteItemInput) {
@@ -401,7 +433,9 @@ export function useLibraryItems(
     quickSetNovelProgress,
     updateTracking,
     deleteItem,
+    restoreDeletedItem,
     mergeItems,
+    restoreMergedItems,
     addWebsite,
     updateWebsite,
     addMedia,

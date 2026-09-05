@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const SETTINGS_NAV = [
   { id: "connections", label: "Connections", href: "/settings/connections" },
   { id: "tracking", label: "Auto Tracking", href: "/settings/tracking" },
+  { id: "recovery", label: "Recently Changed", href: "/settings/recovery" },
 ] as const;
 
 interface SettingsShellProps {

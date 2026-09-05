@@ -137,5 +137,46 @@ export function useActivity(userId?: string | null) {
     setEvents((current) => current.map((event) => (event.itemId === oldItemId ? { ...event, itemId: newItemId } : event)));
   }
 
-  return { events, isHydrated, error, logEvent, removeEventsForItem, getEventsForItem, reassignEventsForItem, reload: hydrate };
+  /**
+   * Stage 28 — local mode only: reinserts previously deleted events
+   * verbatim (same id/timestamp/every field), used by delete-Undo. Never
+   * synthesizes new "today" events — restoration must be exact, or the
+   * history becomes a record of what Undo did instead of what actually
+   * happened to the item.
+   */
+  function restoreEventsForItem(restored: ActivityEvent[]) {
+    if (userId || restored.length === 0) return;
+    setEvents((current) => {
+      const next = [...restored, ...current];
+      return next.length > MAX_ACTIVITY_EVENTS ? next.slice(0, MAX_ACTIVITY_EVENTS) : next;
+    });
+  }
+
+  /**
+   * Stage 28 — local mode only: moves back exactly the events that moved
+   * during a merge (matched by id), used by merge-Undo. Deliberately more
+   * precise than reassignEventsForItem's blanket "every event on this
+   * item" — the survivor may have gained its own new events since the
+   * merge, and those must stay put, not follow the duplicate back.
+   */
+  function restoreEventsForMerge(movedEventIds: string[], survivorId: string, duplicateId: string) {
+    if (userId) return;
+    const moved = new Set(movedEventIds);
+    setEvents((current) =>
+      current.map((event) => (moved.has(event.id) && event.itemId === survivorId ? { ...event, itemId: duplicateId } : event)),
+    );
+  }
+
+  return {
+    events,
+    isHydrated,
+    error,
+    logEvent,
+    removeEventsForItem,
+    getEventsForItem,
+    reassignEventsForItem,
+    restoreEventsForItem,
+    restoreEventsForMerge,
+    reload: hydrate,
+  };
 }

@@ -183,6 +183,51 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     );
   }
 
+  /**
+   * Stage 28 — local mode only: reinserts `itemId` into each of the given
+   * collections, used by delete-Undo. The caller
+   * (lib/recovery-orchestration.ts) has already validated via
+   * lib/library-recovery.ts's validateDeleteUndo that every one of these
+   * collections still exists before this is ever invoked.
+   */
+  function restoreMembershipsForItem(itemId: string, collectionIds: string[]) {
+    if (userId) return;
+    setCollections((current) =>
+      current.map((collection) =>
+        collectionIds.includes(collection.id) && !collection.itemIds.includes(itemId)
+          ? { ...collection, itemIds: [...collection.itemIds, itemId] }
+          : collection,
+      ),
+    );
+  }
+
+  /**
+   * Stage 28 — local mode only: splits the survivor's current collection
+   * memberships back into the two items' own recorded pre-merge sets —
+   * never a blind copy. A collection both items belonged to before the
+   * merge gets both items back; one only the duplicate belonged to gets
+   * only the duplicate back. Used by merge-Undo.
+   */
+  function restoreMembershipsForMerge(
+    survivorId: string,
+    duplicateId: string,
+    survivorCollectionIds: string[],
+    duplicateCollectionIds: string[],
+  ) {
+    if (userId) return;
+    setCollections((current) =>
+      current.map((collection) => {
+        const inSurvivorSet = survivorCollectionIds.includes(collection.id);
+        const inDuplicateSet = duplicateCollectionIds.includes(collection.id);
+        if (!inSurvivorSet && !inDuplicateSet) return collection;
+        let itemIds = collection.itemIds.filter((id) => id !== survivorId && id !== duplicateId);
+        if (inSurvivorSet) itemIds = [...itemIds, survivorId];
+        if (inDuplicateSet) itemIds = [...itemIds, duplicateId];
+        return { ...collection, itemIds };
+      }),
+    );
+  }
+
   function deleteCollection(id: string) {
     setCollections((current) => current.filter((collection) => collection.id !== id));
 
@@ -206,6 +251,8 @@ export function useCollections(items: LibraryItem[], itemsHydrated: boolean, use
     updateCollection,
     deleteCollection,
     mergeItemReferences,
+    restoreMembershipsForItem,
+    restoreMembershipsForMerge,
     reload: hydrate,
   };
 }

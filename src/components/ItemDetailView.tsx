@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
@@ -29,6 +29,9 @@ import { ItemActionsMenu } from "@/components/ItemActionsMenu";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
 import { CollectionMembershipDialog } from "@/components/CollectionMembershipDialog";
+import { UndoToast } from "@/components/UndoToast";
+import { deleteItemWithRecovery } from "@/lib/recovery-orchestration";
+import { setPendingUndoToast } from "@/lib/library-recovery";
 import { ArrowLeftIcon, ExternalLinkIcon, GlobeIcon, StarIcon } from "@/components/icons";
 
 interface ItemDetailViewProps {
@@ -69,6 +72,18 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [membershipOpen, setMembershipOpen] = useState(false);
+  // Stage 28 — this page navigates away immediately after a successful
+  // delete, so its own Undo toast can't persist here; instead it hands the
+  // recovery id off to /library via setPendingUndoToast and only shows a
+  // toast itself for an outcome that keeps the user on this page (a
+  // failed delete).
+  const [resultToast, setResultToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!resultToast) return;
+    const timer = setTimeout(() => setResultToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [resultToast]);
 
   if (!library.isHydrated) {
     return <DetailShell>{null}</DetailShell>;
@@ -144,13 +159,16 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
     setDialogState(null);
   }
 
-  function handleConfirmDelete() {
-    library.deleteItem(itemId);
-    // Deleting an item also removes its activity history — an orphaned
-    // history entry for a now-nonexistent item has no use, and this keeps
-    // markly.activity from growing unboundedly with dead references.
-    activity.removeEventsForItem(itemId);
+  async function handleConfirmDelete() {
     setDeleteRequested(false);
+    const current = library.items.find((candidate) => candidate.id === itemId);
+    if (!current) return;
+    const result = await deleteItemWithRecovery(current, userId, library, collectionsStore, activity);
+    if (!result.ok) {
+      setResultToast(result.errorText ?? "Couldn't delete this item. Try again.");
+      return;
+    }
+    if (result.handle) setPendingUndoToast(result.handle);
     router.push("/library");
   }
 
@@ -337,6 +355,8 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
         onCreateCollection={handleQuickCreateCollection}
         onClose={() => setMembershipOpen(false)}
       />
+
+      {resultToast && <UndoToast message={resultToast} onDismiss={() => setResultToast(null)} />}
     </DetailShell>
   );
 }

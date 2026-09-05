@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LibraryItem, MediaItem, MediaItemInput, SupportedItemType, WebsiteItem, WebsiteItemInput } from "@/types/library-item";
 import type { Collection, CollectionInput } from "@/types/collection";
 import { Header } from "@/components/Header";
@@ -34,9 +34,10 @@ import {
 import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { findDuplicateGroups, type DuplicateGroup } from "@/lib/duplicate-detection";
-import { computeMergedLibraryItem, MERGE_BLOCK_REASON_LABELS } from "@/lib/library-merge";
 import { DuplicateMergeDialog } from "@/components/DuplicateMergeDialog";
-import { isMediaItem } from "@/lib/item-detail";
+import { UndoToast } from "@/components/UndoToast";
+import { deleteItemWithRecovery, mergeItemsWithRecovery, undoRecoveryAction } from "@/lib/recovery-orchestration";
+import { describeRecoveryAction, takePendingUndoToast } from "@/lib/library-recovery";
 
 interface LibraryViewProps {
   items: LibraryItem[];
@@ -78,6 +79,43 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<Collection | null>(null);
   const [membershipItem, setMembershipItem] = useState<LibraryItem | null>(null);
   const [reviewGroup, setReviewGroup] = useState<DuplicateGroup | null>(null);
+
+  // Stage 28 — Undo toast for Delete/Merge. `undoToast` carries a live
+  // recovery id (shows an Undo button); `resultToast` shows the outcome
+  // of clicking it (or of an action with nothing to undo, e.g. a
+  // cloud-mode error) and never has one. Auto-dismissed below.
+  const [undoToast, setUndoToast] = useState<{ recoveryId: string; message: string } | null>(null);
+  const [resultToast, setResultToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    // One-shot hand-off from ItemDetailView, which deletes its own item
+    // and redirects here — see setPendingUndoToast's doc comment.
+    const pending = takePendingUndoToast();
+    if (pending) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of a same-tab hand-off value (sessionStorage) on mount; the value can't be derived during render since sessionStorage isn't available at SSR time, and it must be consumed exactly once, not on every render.
+      setUndoToast({ recoveryId: pending.recoveryId, message: describeRecoveryAction(pending.actionType, pending.title) });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!undoToast) return;
+    const timer = setTimeout(() => setUndoToast(null), 8000);
+    return () => clearTimeout(timer);
+  }, [undoToast]);
+
+  useEffect(() => {
+    if (!resultToast) return;
+    const timer = setTimeout(() => setResultToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [resultToast]);
+
+  async function handleUndoClick() {
+    if (!undoToast) return;
+    const { recoveryId } = undoToast;
+    setUndoToast(null);
+    const result = await undoRecoveryAction(recoveryId, userId, library, collectionsStore, activity);
+    setResultToast(result.message);
+  }
 
   // Stage 27 — pure, client-side, over items this view already has (see
   // README "Duplicate detection performance"). Never fuzzy — see
@@ -247,15 +285,19 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     setDeleteTarget(null);
   }
 
-  function handleConfirmDelete() {
+  async function handleConfirmDelete() {
     if (!deleteTarget) return;
-    // Removing the item alone is enough to clean collections — the
-    // stale-membership cleanup effect inside useCollections reacts to that
-    // change and strips the id from every collection on its own. Activity
-    // history isn't self-healing the same way, so it's cleaned explicitly.
-    library.deleteItem(deleteTarget.id);
-    activity.removeEventsForItem(deleteTarget.id);
+    const item = deleteTarget;
     setDeleteTarget(null);
+
+    const result = await deleteItemWithRecovery(item, userId, library, collectionsStore, activity);
+    if (!result.ok) {
+      setResultToast(result.errorText ?? "Couldn't delete this item. Try again.");
+      return;
+    }
+    if (result.handle) {
+      setUndoToast({ recoveryId: result.handle.recoveryId, message: describeRecoveryAction(result.handle.actionType, result.handle.title) });
+    }
   }
 
   function handleSelectCollection(id: string) {
@@ -302,61 +344,16 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   }
 
   /**
-   * Stage 27 — orchestrates one pairwise merge across all three stores.
-   *
-   * Local mode ordering matters here, and got this wrong on the first
-   * pass (caught live, not assumed): useCollections has a self-healing
-   * effect that strips any collection itemId no longer present in
-   * `items`, reacting whenever `items` changes. If the duplicate is
-   * removed from the library BEFORE its collection memberships are
-   * reassigned to the survivor, that effect sees a now-dangling itemId
-   * and strips it outright — the membership is lost instead of moved,
-   * even though mergeItemReferences itself is correct in isolation.
-   * Validating first (via the same pure computeMergedLibraryItem the
-   * hook uses internally, so a blocked merge never touches anything) and
-   * then reassigning collections/activity BEFORE calling
-   * library.mergeItems keeps the "duplicate id disappears from `items`"
-   * moment and the "collections/activity already point at the survivor"
-   * moment in the same synchronous batch, so the cleanup effect never
-   * observes an in-between state with nothing to strip.
-   *
-   * Cloud mode doesn't have this hazard at all — the RPC moves every
-   * relationship atomically before deleting the duplicate row — so
-   * mergeItemReferences/reassignEventsForItem no-op there regardless of
-   * call order, and collections/activity are reloaded from the server
-   * afterward instead of locally replicated.
+   * Stage 27's merge, orchestrated (together with its Stage 28 recovery
+   * snapshot) by lib/recovery-orchestration.ts — see that module's doc
+   * comment for the local-mode ordering hazard it exists to avoid.
    */
   async function handleMergeDuplicates(survivorId: string, duplicateId: string): Promise<{ ok: boolean; errorText?: string }> {
-    const survivor = library.items.find((candidate) => candidate.id === survivorId);
-    const duplicate = library.items.find((candidate) => candidate.id === duplicateId);
-    if (!survivor || !duplicate || !isMediaItem(survivor) || !isMediaItem(duplicate)) {
-      return { ok: false, errorText: "One of these items couldn't be found. Try again." };
+    const result = await mergeItemsWithRecovery(survivorId, duplicateId, userId, library, collectionsStore, activity);
+    if (result.ok && result.handle) {
+      setUndoToast({ recoveryId: result.handle.recoveryId, message: describeRecoveryAction(result.handle.actionType, result.handle.title) });
     }
-    const preview = computeMergedLibraryItem(survivor, duplicate);
-    if (preview.status === "blocked") {
-      return { ok: false, errorText: MERGE_BLOCK_REASON_LABELS[preview.reason] };
-    }
-
-    if (!userId) {
-      collectionsStore.mergeItemReferences(survivorId, duplicateId);
-      activity.reassignEventsForItem(duplicateId, survivorId);
-    }
-
-    const result = await library.mergeItems(survivorId, duplicateId);
-    if (result.status === "blocked") {
-      return { ok: false, errorText: MERGE_BLOCK_REASON_LABELS[result.reason] };
-    }
-    if (result.status === "error") {
-      return {
-        ok: false,
-        errorText: result.reason === "network" ? "Couldn't reach Markly. Try again." : "One of these items couldn't be found. Try again.",
-      };
-    }
-
-    if (userId) {
-      await Promise.all([collectionsStore.reload(), activity.reload()]);
-    }
-    return { ok: true };
+    return { ok: result.ok, errorText: result.errorText };
   }
 
   function handleOpenMembershipDialog(item: LibraryItem) {
@@ -579,6 +576,9 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
           onClose={() => setReviewGroup(null)}
         />
       )}
+
+      {undoToast && <UndoToast message={undoToast.message} onUndo={handleUndoClick} onDismiss={() => setUndoToast(null)} />}
+      {!undoToast && resultToast && <UndoToast message={resultToast} onDismiss={() => setResultToast(null)} />}
     </div>
   );
 }
