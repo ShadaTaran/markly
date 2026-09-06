@@ -1,6 +1,7 @@
 import type { ActivityEvent } from "@/types/activity";
 import type { Collection } from "@/types/collection";
 import type { LibraryItem, MediaItem } from "@/types/library-item";
+import type { Reminder } from "@/types/reminder";
 
 /**
  * Stage 28 — narrow, short-lived Undo for exactly two destructive actions:
@@ -27,6 +28,14 @@ export interface DeleteRecoveryPayload {
   item: LibraryItem;
   collectionIds: string[];
   activityEvents: ActivityEvent[];
+  /**
+   * Stage 34 — every reminder that referenced this item, captured before
+   * delete so Undo can restore them exactly (mirrors activityEvents' own
+   * role). Optional so a delete-recovery record persisted before Stage 34
+   * existed parses safely — its absence is also literally correct for any
+   * such record, since reminders didn't exist yet when it was created.
+   */
+  reminders?: Reminder[];
 }
 
 export interface MergeRecoveryPayload {
@@ -59,6 +68,42 @@ export interface MergeRecoveryPayload {
     survivor: string | null;
     duplicate: string | null;
   };
+  /**
+   * Stage 34 — the duplicate's reminder ids that moved to the survivor
+   * during this merge (their libraryItemId was reassigned, nothing else
+   * about them changed) — mirrors movedActivityIds's role exactly. Undo
+   * moves them back to the (recreated) duplicate. Optional for the same
+   * pre-Stage-34-record reason as DeleteRecoveryPayload.reminders.
+   */
+  movedReminderIds?: string[];
+  /**
+   * Stage 34 — full row data for any of the duplicate's ACTIVE reminders
+   * that were logically identical to one the survivor already had (same
+   * release target, or same continue instant — see
+   * lib/reminders.ts's findActiveReminderCollision) at merge time. These
+   * were deleted rather than moved, so merge never ends up with two active
+   * reminders for the same thing; Undo needs their COMPLETE data (not just
+   * an id, since the row no longer exists anywhere) to recreate them
+   * exactly, restoring the original two-reminder topology.
+   */
+  deduplicatedReminderSnapshots?: Reminder[];
+  /**
+   * Correctness-review fix (Issue B) — the survivor's ENTIRE post-merge
+   * reminder set (its own untouched reminders plus whatever moved in from
+   * the duplicate), captured immediately after the merge — the reference
+   * point Undo compares the survivor's CURRENT full reminder set against.
+   * Unlike collections/activity (an id SET is enough, since those rows
+   * are never edited in place), a reminder row IS mutable, so this must
+   * be full row content, not just ids: any reminder deleted, edited, or
+   * dismissed since the merge, or a brand-new one created on the
+   * survivor, makes the current set differ from this one and blocks Undo
+   * — the same "compare full row content to what was captured right
+   * after the write" technique survivorPostMergeExpected already uses for
+   * the LibraryItem row itself, generalized to a set. Optional for the
+   * same pre-Stage-34-record reason as the other Stage 34 fields above —
+   * its absence means "skip this check," not "expect zero reminders."
+   */
+  survivorPostMergeRemindersExpected?: Reminder[];
 }
 
 export interface RecoveryEntry {
@@ -76,7 +121,8 @@ export type RecoveryConflictReason =
   | "collection_missing"
   | "survivor_missing"
   | "survivor_changed"
-  | "collections_changed";
+  | "collections_changed"
+  | "reminders_changed";
 
 export type UndoOutcome =
   | { status: "recovered" }
@@ -143,6 +189,7 @@ export function validateMergeUndo(
   items: LibraryItem[],
   collections: Collection[],
   events: ActivityEvent[],
+  reminders: Reminder[],
 ): UndoOutcome {
   const survivor = items.find((item) => item.id === payload.survivorId);
   if (!survivor) return { status: "recovery_conflict", reason: "survivor_missing" };
@@ -192,6 +239,26 @@ export function validateMergeUndo(
     expectedActivityIds.size !== currentSurvivorActivityIds.size || [...expectedActivityIds].some((id) => !currentSurvivorActivityIds.has(id));
   if (activityChanged) {
     return { status: "recovery_conflict", reason: "survivor_changed" };
+  }
+
+  // Correctness-review fix (Issue B) — mirrors 0016's SQL check exactly
+  // (see survivorPostMergeRemindersExpected's own doc comment): the
+  // survivor's reminder set must be byte-identical to what the merge
+  // itself produced. Unlike collections/activity (an id set suffices,
+  // since those entries are never edited in place), a reminder row IS
+  // mutable, so this compares full row CONTENT, sorted by id for a
+  // deterministic order-independent comparison — catches a moved
+  // reminder later deleted/edited/dismissed, the survivor's own untouched
+  // reminder later changed, or a brand-new reminder created on the
+  // survivor since the merge. Skipped (never a false conflict) only for a
+  // genuinely pre-Stage-34 record, where the field is absent.
+  if (payload.survivorPostMergeRemindersExpected !== undefined) {
+    const sortedById = <T extends { id: string }>(list: readonly T[]): T[] => [...list].sort((a, b) => a.id.localeCompare(b.id));
+    const currentSurvivorReminders = sortedById(reminders.filter((reminder) => reminder.libraryItemId === payload.survivorId));
+    const expectedReminders = sortedById(payload.survivorPostMergeRemindersExpected);
+    if (!deepEqual(currentSurvivorReminders, expectedReminders)) {
+      return { status: "recovery_conflict", reason: "reminders_changed" };
+    }
   }
 
   return { status: "recovered" };

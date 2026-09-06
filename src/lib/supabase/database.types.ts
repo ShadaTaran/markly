@@ -77,6 +77,23 @@ export interface ActivitySummaryRow {
   last_activity_at: string;
 }
 
+/** Stage 34 — one row per reminder rule (release or continue); see supabase/migrations/0016_stage34_reminders.sql for the CHECK constraint enforcing which columns apply to which `kind`, and the two partial unique indexes that back duplicate-create collapsing. */
+export interface ReminderRow {
+  id: string;
+  user_id: string;
+  library_item_id: string;
+  kind: string;
+  provider: string | null;
+  external_media_id: string | null;
+  episode: number | null;
+  scheduled_for: string | null;
+  remind_before_minutes: number | null;
+  remind_at: string | null;
+  dismissed_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
 type InsertOf<Row, Required extends keyof Row> = Partial<Row> & Pick<Row, Required>;
 
 export type LibraryItemInsert = InsertOf<LibraryItemRow, "id" | "user_id" | "type" | "title">;
@@ -84,3 +101,4 @@ export type CollectionInsert = InsertOf<CollectionRow, "id" | "user_id" | "name"
 export type CollectionItemInsert = InsertOf<CollectionItemRow, "collection_id" | "item_id" | "user_id">;
 export type ActivityEventInsert = InsertOf<ActivityEventRow, "id" | "user_id" | "item_id" | "type">;
 export type SavedLibraryViewInsert = InsertOf<SavedLibraryViewRow, "id" | "user_id" | "name" | "definition_version" | "definition">;
+export type ReminderInsert = InsertOf<ReminderRow, "id" | "user_id" | "library_item_id" | "kind">;

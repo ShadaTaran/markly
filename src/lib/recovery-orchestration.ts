@@ -4,6 +4,7 @@ import type { useActivity } from "@/hooks/useActivity";
 import type { useCollections } from "@/hooks/useCollections";
 import type { useLibraryItems } from "@/hooks/useLibraryItems";
 import type { useActivitySummary } from "@/hooks/useActivitySummary";
+import type { useReminders } from "@/hooks/useReminders";
 import type { LibraryItem } from "@/types/library-item";
 import { isMediaItem } from "@/lib/item-detail";
 import { getSupabaseClient } from "@/lib/supabase/client";
@@ -11,6 +12,7 @@ import { deleteLibraryItemWithRecovery, undoLibraryRecovery } from "@/lib/cloud/
 import { addRecoveryAction, getRecoveryAction, removeRecoveryAction } from "@/lib/local-recovery-storage";
 import { generateId } from "@/lib/utils";
 import { computeMergedLibraryItem, MERGE_BLOCK_REASON_LABELS } from "@/lib/library-merge";
+import { findActiveReminderCollision } from "@/lib/reminders";
 import {
   RECOVERY_TTL_MS,
   validateDeleteUndo,
@@ -33,6 +35,7 @@ type Library = ReturnType<typeof useLibraryItems>;
 type CollectionsStore = ReturnType<typeof useCollections>;
 type Activity = ReturnType<typeof useActivity>;
 type ActivitySummaryStore = ReturnType<typeof useActivitySummary>;
+type RemindersStore = ReturnType<typeof useReminders>;
 
 export interface RecoveryHandle {
   recoveryId: string;
@@ -61,6 +64,7 @@ export async function deleteItemWithRecovery(
   library: Library,
   collectionsStore: CollectionsStore,
   activity: Activity,
+  remindersStore: RemindersStore,
 ): Promise<DeleteWithRecoveryResult> {
   if (userId) {
     const supabase = getSupabaseClient();
@@ -70,7 +74,7 @@ export async function deleteItemWithRecovery(
       if (result.status !== "deleted" || !result.recoveryId) {
         return { ok: false, errorText: "This item couldn't be found. Try again." };
       }
-      await Promise.all([library.reload(), collectionsStore.reload(), activity.reload()]);
+      await Promise.all([library.reload(), collectionsStore.reload(), activity.reload(), remindersStore.reload()]);
       return { ok: true, handle: { recoveryId: result.recoveryId, actionType: "delete_item", title: item.title } };
     } catch {
       return { ok: false, errorText: "Couldn't reach Markly. Try again." };
@@ -79,9 +83,12 @@ export async function deleteItemWithRecovery(
 
   const collectionIds = collectionsStore.collections.filter((c) => c.itemIds.includes(item.id)).map((c) => c.id);
   const activityEvents = activity.events.filter((event) => event.itemId === item.id);
+  // Stage 34 — captured BEFORE removeForItem runs below, so Undo can
+  // restore exactly what existed (mirrors activityEvents' own capture).
+  const reminders = remindersStore.reminders.filter((reminder) => reminder.libraryItemId === item.id);
   const recoveryId = generateId();
   const now = Date.now();
-  const payload: DeleteRecoveryPayload = { item, collectionIds, activityEvents };
+  const payload: DeleteRecoveryPayload = { item, collectionIds, activityEvents, reminders };
   addRecoveryAction({
     id: recoveryId,
     actionType: "delete_item",
@@ -93,6 +100,7 @@ export async function deleteItemWithRecovery(
 
   library.deleteItem(item.id);
   activity.removeEventsForItem(item.id);
+  remindersStore.removeForItem(item.id);
   return { ok: true, handle: { recoveryId, actionType: "delete_item", title: item.title } };
 }
 
@@ -120,6 +128,7 @@ export async function mergeItemsWithRecovery(
   collectionsStore: CollectionsStore,
   activity: Activity,
   activitySummaryStore: ActivitySummaryStore,
+  remindersStore: RemindersStore,
 ): Promise<MergeWithRecoveryResult> {
   const survivor = library.items.find((candidate) => candidate.id === survivorId);
   const duplicate = library.items.find((candidate) => candidate.id === duplicateId);
@@ -146,6 +155,44 @@ export async function mergeItemsWithRecovery(
       survivor: activitySummaryStore.summary.get(survivorId) ?? null,
       duplicate: activitySummaryStore.summary.get(duplicateId) ?? null,
     };
+
+    // Stage 34 — decide, BEFORE any mutation, which of the duplicate's
+    // ACTIVE reminders move to the survivor untouched vs. are exact
+    // logical duplicates of one the survivor already has (same release
+    // target, or same continue instant — see findActiveReminderCollision).
+    // A dismissed duplicate reminder never collides (the same rule the DB's
+    // partial unique indexes use) and always moves freely.
+    const duplicateReminders = remindersStore.reminders.filter((reminder) => reminder.libraryItemId === duplicateId);
+    const survivorActiveReminders = remindersStore.reminders.filter(
+      (reminder) => reminder.libraryItemId === survivorId && !reminder.dismissedAt,
+    );
+    const movedReminderIds: string[] = [];
+    const deduplicatedReminderSnapshots: typeof duplicateReminders = [];
+    const movedReminders: typeof duplicateReminders = [];
+    for (const reminder of duplicateReminders) {
+      // Checked as "if this reminder already belonged to the survivor,
+      // would it collide with something the survivor already has" — hence
+      // the libraryItemId override to survivorId; findActiveReminderCollision
+      // compares identity fields only once the target item matches, so
+      // checking against the duplicate's OWN (different) libraryItemId
+      // would never find a collision at all.
+      if (!reminder.dismissedAt && findActiveReminderCollision({ ...reminder, libraryItemId: survivorId }, survivorActiveReminders)) {
+        deduplicatedReminderSnapshots.push(reminder);
+      } else {
+        movedReminderIds.push(reminder.id);
+        movedReminders.push({ ...reminder, libraryItemId: survivorId });
+      }
+    }
+    // Correctness-review fix (Issue B) — the survivor's ENTIRE expected
+    // post-merge reminder set: its own untouched reminders (active AND
+    // dismissed — both stay exactly where they are) plus whatever just
+    // moved in. Undo's validateMergeUndo compares the survivor's CURRENT
+    // full reminder set against this exact value — see that function's
+    // own doc comment for why a mutable-row full-content comparison is
+    // needed here (unlike collections/activity's id-set-only checks).
+    const survivorAllReminders = remindersStore.reminders.filter((reminder) => reminder.libraryItemId === survivorId);
+    const survivorPostMergeRemindersExpected = [...survivorAllReminders, ...movedReminders];
+
     recoveryId = generateId();
     const now = Date.now();
     const payload: MergeRecoveryPayload = {
@@ -159,6 +206,9 @@ export async function mergeItemsWithRecovery(
       movedActivityIds,
       survivorPreMergeActivityIds,
       activitySummaryBefore,
+      movedReminderIds,
+      deduplicatedReminderSnapshots,
+      survivorPostMergeRemindersExpected,
     };
     addRecoveryAction({
       id: recoveryId,
@@ -177,6 +227,11 @@ export async function mergeItemsWithRecovery(
     // either item's original qualifying event has already aged out of
     // the 500-event detailed log.
     activitySummaryStore.mergeInto(duplicateId, survivorId);
+    remindersStore.reassignForMerge(
+      movedReminderIds,
+      deduplicatedReminderSnapshots.map((reminder) => reminder.id),
+      survivorId,
+    );
   }
 
   const result = await library.mergeItems(survivorId, duplicateId);
@@ -200,6 +255,7 @@ export async function mergeItemsWithRecovery(
     // this hook no longer keys its cloud refresh off, to avoid a similar
     // race with fetchActivityEvents).
     activitySummaryStore.reload();
+    remindersStore.reload();
     return {
       ok: true,
       handle: result.recoveryId ? { recoveryId: result.recoveryId, actionType: "merge_items", title: result.merged.title } : undefined,
@@ -221,6 +277,7 @@ const CONFLICT_MESSAGES: Record<string, string> = {
   survivor_changed: "This item changed after that action, so Markly can't safely undo it.",
   source_claimed_elsewhere: "One of the tracked sources involved has since been linked to something else, so Markly can't safely undo this.",
   collections_changed: "This item's collections changed after that action, so Markly can't safely undo it.",
+  reminders_changed: "A reminder on this item changed after that action, so Markly can't safely undo it.",
 };
 
 function conflictMessage(reason: string | undefined): string {
@@ -241,6 +298,7 @@ export async function undoRecoveryAction(
   collectionsStore: CollectionsStore,
   activity: Activity,
   activitySummaryStore: ActivitySummaryStore,
+  remindersStore: RemindersStore,
 ): Promise<UndoResult> {
   if (userId) {
     const supabase = getSupabaseClient();
@@ -256,6 +314,10 @@ export async function undoRecoveryAction(
         // this just needs an explicit re-fetch, same reasoning as the
         // merge branch above.
         activitySummaryStore.reload();
+        // Stage 34 — same reasoning: reminders' topology (moved back /
+        // recreated from a dedup snapshot) is restored server-side inside
+        // the same transaction; this just re-fetches.
+        remindersStore.reload();
         return { ok: true, message: "Undone." };
       }
       if (result.status === "expired") return { ok: false, message: "The undo period for that action has expired." };
@@ -277,12 +339,13 @@ export async function undoRecoveryAction(
     library.restoreDeletedItem(payload.item);
     collectionsStore.restoreMembershipsForItem(payload.item.id, payload.collectionIds);
     activity.restoreEventsForItem(payload.activityEvents);
+    remindersStore.restoreForItem(payload.reminders ?? []);
     removeRecoveryAction(recoveryId);
     return { ok: true, message: "Undone." };
   }
 
   const payload = entry.payload as MergeRecoveryPayload;
-  const outcome = validateMergeUndo(payload, library.items, collectionsStore.collections, activity.events);
+  const outcome = validateMergeUndo(payload, library.items, collectionsStore.collections, activity.events, remindersStore.reminders);
   if (outcome.status !== "recovered") return { ok: false, message: conflictMessage(outcome.reason) };
 
   library.restoreMergedItems(payload.survivorId, payload.survivorPreMerge, payload.duplicatePreMerge);
@@ -320,6 +383,13 @@ export async function undoRecoveryAction(
     );
     activitySummaryStore.recomputeForItems([payload.survivorId, payload.duplicateId], postUndoEvents);
   }
+  // Stage 34 — restores exactly what the merge computed: moved reminders
+  // go back to the (just-recreated) duplicate, deduplicated ones are
+  // reinserted verbatim. Both arrays are absent (never just empty) only
+  // for a pre-Stage-34 recovery record, for which there is genuinely
+  // nothing to restore (reminders didn't exist yet) — restoreForMerge
+  // no-ops correctly on empty arrays either way.
+  remindersStore.restoreForMerge(payload.movedReminderIds ?? [], payload.deduplicatedReminderSnapshots ?? [], payload.duplicateId);
   removeRecoveryAction(recoveryId);
   return { ok: true, message: "Undone." };
 }

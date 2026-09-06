@@ -4,12 +4,17 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { LibraryItem } from "@/types/library-item";
 import type { ReleaseEvent } from "@/types/release-event";
+import type { Reminder, ReleaseReminder, ReleaseReminderTarget } from "@/types/reminder";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useActivity } from "@/hooks/useActivity";
 import { useReleaseCalendar } from "@/hooks/useReleaseCalendar";
+import { useReminders } from "@/hooks/useReminders";
+import { findActiveReminderCollision } from "@/lib/reminders";
+import { RemindMeReleaseDialog } from "@/components/RemindMeReleaseDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   CALENDAR_RANGE_OPTIONS,
   DEFAULT_CALENDAR_RANGE_DAYS,
@@ -24,6 +29,7 @@ import {
 import { formatDashboardProgress } from "@/lib/dashboard";
 import { getItemHref, getProviderLabel } from "@/lib/item-detail";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
+import { BellIcon } from "@/components/icons";
 
 interface CalendarViewProps {
   items: LibraryItem[];
@@ -40,6 +46,9 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
   const timeZone = useMemo(() => getLocalTimeZone(), []);
 
   const calendar = useReleaseCalendar(items, rangeDays);
+  const remindersStore = useReminders(userId);
+  const [remindDialog, setRemindDialog] = useState<{ event: ReleaseEvent; existing: ReleaseReminder | null } | null>(null);
+  const [removingReminder, setRemovingReminder] = useState<ReleaseReminder | null>(null);
 
   const hasAnyEligibleItem = useMemo(() => buildAniListMediaAssociation(items).size > 0, [items]);
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -89,7 +98,15 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
                     </h2>
                     <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
                       {group.events.map((event) => (
-                        <EventRow key={event.id} event={event} item={itemsById.get(event.libraryItemId)} timeZone={timeZone} />
+                        <EventRow
+                          key={event.id}
+                          event={event}
+                          item={itemsById.get(event.libraryItemId)}
+                          timeZone={timeZone}
+                          existingReminder={findReleaseReminder(event, remindersStore.reminders)}
+                          onRemind={(existing) => setRemindDialog({ event, existing })}
+                          onRemoveReminder={setRemovingReminder}
+                        />
                       ))}
                     </ul>
                   </section>
@@ -99,8 +116,61 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
           </>
         )}
       </main>
+
+      <RemindMeReleaseDialog
+        isOpen={remindDialog !== null}
+        target={remindDialog ? releaseTargetFromEvent(remindDialog.event) : null}
+        existing={remindDialog?.existing ?? null}
+        onClose={() => setRemindDialog(null)}
+        onCreate={(target, remindBeforeMinutes) =>
+          remindersStore.createReminder({
+            kind: "release",
+            libraryItemId: target.libraryItemId,
+            provider: target.provider,
+            externalMediaId: target.externalMediaId,
+            episode: target.episode,
+            scheduledFor: target.scheduledFor,
+            remindBeforeMinutes,
+          })
+        }
+        onUpdateLeadTime={remindersStore.updateReleaseLeadTime}
+      />
+
+      <ConfirmDialog
+        isOpen={removingReminder !== null}
+        title="Remove reminder?"
+        message="This removes the reminder rule for this episode. This can't be undone."
+        confirmLabel="Remove"
+        danger
+        onCancel={() => setRemovingReminder(null)}
+        onConfirm={() => {
+          if (removingReminder) remindersStore.deleteReminder(removingReminder.id);
+          setRemovingReminder(null);
+        }}
+      />
     </div>
   );
+}
+
+function releaseTargetFromEvent(event: ReleaseEvent): ReleaseReminderTarget | null {
+  if (event.episode === undefined) return null;
+  return {
+    libraryItemId: event.libraryItemId,
+    provider: event.provider,
+    externalMediaId: event.externalMediaId,
+    episode: event.episode,
+    scheduledFor: event.startsAt,
+    title: event.title,
+  };
+}
+
+function findReleaseReminder(event: ReleaseEvent, reminders: readonly Reminder[]): ReleaseReminder | null {
+  if (event.episode === undefined) return null;
+  const collision = findActiveReminderCollision(
+    { kind: "release", libraryItemId: event.libraryItemId, provider: event.provider, externalMediaId: event.externalMediaId, episode: event.episode },
+    reminders,
+  );
+  return collision && collision.kind === "release" ? collision : null;
 }
 
 function RangeSelect({ value, onChange }: { value: CalendarRangeDays; onChange: (value: CalendarRangeDays) => void }) {
@@ -123,7 +193,21 @@ function RangeSelect({ value, onChange }: { value: CalendarRangeDays; onChange: 
   );
 }
 
-function EventRow({ event, item, timeZone }: { event: ReleaseEvent; item: LibraryItem | undefined; timeZone: string }) {
+function EventRow({
+  event,
+  item,
+  timeZone,
+  existingReminder,
+  onRemind,
+  onRemoveReminder,
+}: {
+  event: ReleaseEvent;
+  item: LibraryItem | undefined;
+  timeZone: string;
+  existingReminder: ReleaseReminder | null;
+  onRemind: (existing: ReleaseReminder | null) => void;
+  onRemoveReminder: (reminder: ReleaseReminder) => void;
+}) {
   const title = event.title ?? item?.title ?? "Untitled";
   const href = item ? getItemHref(item) : undefined;
   const progressText = item ? formatDashboardProgress(item) : null;
@@ -157,13 +241,36 @@ function EventRow({ event, item, timeZone }: { event: ReleaseEvent; item: Librar
   );
 
   return (
-    <li className="flex items-center gap-3 px-4 py-2.5">
+    <li className="flex flex-wrap items-center gap-3 px-4 py-2.5">
       {href ? (
         <Link href={href} className="flex min-w-0 flex-1 items-center gap-3 hover:bg-surface-hover" aria-label={`Open ${title}, Episode ${event.episode}, ${fullDateTime}`}>
           {content}
         </Link>
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-3 opacity-70">{content}</div>
+      )}
+      {event.episode !== undefined && (
+        <div className="flex w-full shrink-0 items-center gap-2 pl-12 text-xs font-medium sm:w-auto sm:pl-0">
+          {existingReminder ? (
+            <>
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <BellIcon width={13} height={13} aria-hidden="true" />
+                Reminder set
+              </span>
+              <button type="button" onClick={() => onRemind(existingReminder)} className="text-foreground hover:underline">
+                Edit
+              </button>
+              <button type="button" onClick={() => onRemoveReminder(existingReminder)} className="text-muted-foreground hover:text-danger hover:underline">
+                Remove
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => onRemind(null)} className="inline-flex items-center gap-1 text-foreground hover:underline">
+              <BellIcon width={13} height={13} aria-hidden="true" />
+              Remind me
+            </button>
+          )}
+        </div>
       )}
     </li>
   );

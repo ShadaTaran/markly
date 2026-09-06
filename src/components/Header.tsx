@@ -2,11 +2,12 @@ import Link from "next/link";
 import { SearchBar } from "@/components/SearchBar";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccountMenu } from "@/components/AccountMenu";
+import { ReminderBell } from "@/components/ReminderBell";
 import { PlusIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 interface HeaderProps {
-  active: "dashboard" | "library" | "calendar";
+  active: "dashboard" | "library" | "calendar" | "reminders";
   /** Only the Library view searches/adds items — omit these to get a bare header. */
   searchQuery?: string;
   onSearchQueryChange?: (value: string) => void;
@@ -55,6 +56,7 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <ReminderBell />
           <ThemeToggle />
           <AccountMenu />
           {onAddItem && (

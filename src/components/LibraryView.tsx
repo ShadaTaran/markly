@@ -31,6 +31,7 @@ import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
 import { useSmartViews } from "@/hooks/useSmartViews";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
+import { useReminders } from "@/hooks/useReminders";
 import { getValidItemIds } from "@/lib/collections";
 import { getCategories, getItemTypeOptions, getUniqueCategories, type TypeFilterValue } from "@/lib/library-items";
 import {
@@ -79,6 +80,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const { collections } = collectionsStore;
   const smartViewsStore = useSmartViews(userId);
   const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
+  const remindersStore = useReminders(userId);
 
   // See DashboardView for why cloud mode needs an explicit loading state
   // that local mode doesn't.
@@ -155,7 +157,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     if (!undoToast) return;
     const { recoveryId } = undoToast;
     setUndoToast(null);
-    const result = await undoRecoveryAction(recoveryId, userId, library, collectionsStore, activity, activitySummaryStore);
+    const result = await undoRecoveryAction(recoveryId, userId, library, collectionsStore, activity, activitySummaryStore, remindersStore);
     setResultToast(result.message);
   }
 
@@ -432,7 +434,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     const item = deleteTarget;
     setDeleteTarget(null);
 
-    const result = await deleteItemWithRecovery(item, userId, library, collectionsStore, activity);
+    const result = await deleteItemWithRecovery(item, userId, library, collectionsStore, activity, remindersStore);
     if (!result.ok) {
       setResultToast(result.errorText ?? "Couldn't delete this item. Try again.");
       return;
@@ -487,7 +489,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
    * comment for the local-mode ordering hazard it exists to avoid.
    */
   async function handleMergeDuplicates(survivorId: string, duplicateId: string): Promise<{ ok: boolean; errorText?: string }> {
-    const result = await mergeItemsWithRecovery(survivorId, duplicateId, userId, library, collectionsStore, activity, activitySummaryStore);
+    const result = await mergeItemsWithRecovery(survivorId, duplicateId, userId, library, collectionsStore, activity, activitySummaryStore, remindersStore);
     if (result.ok && result.handle) {
       setUndoToast({ recoveryId: result.handle.recoveryId, message: describeRecoveryAction(result.handle.actionType, result.handle.title) });
     }

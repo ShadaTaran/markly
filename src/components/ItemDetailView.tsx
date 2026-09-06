@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
+import type { ContinueReminder } from "@/types/reminder";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
+import { useReminders } from "@/hooks/useReminders";
 import { getDomain, getFaviconUrl } from "@/lib/website";
 import {
   formatDate,
@@ -30,9 +32,10 @@ import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDia
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
 import { CollectionMembershipDialog } from "@/components/CollectionMembershipDialog";
 import { UndoToast } from "@/components/UndoToast";
+import { RemindMeContinueDialog } from "@/components/RemindMeContinueDialog";
 import { deleteItemWithRecovery } from "@/lib/recovery-orchestration";
 import { setPendingUndoToast } from "@/lib/library-recovery";
-import { ArrowLeftIcon, ExternalLinkIcon, GlobeIcon, StarIcon } from "@/components/icons";
+import { ArrowLeftIcon, BellIcon, ExternalLinkIcon, GlobeIcon, StarIcon } from "@/components/icons";
 
 interface ItemDetailViewProps {
   itemId: string;
@@ -69,9 +72,11 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const activity = useActivity(userId);
   const library = useLibraryItems([], activity.logEvent, userId);
   const collectionsStore = useCollections(library.items, library.isHydrated, userId);
+  const remindersStore = useReminders(userId);
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [membershipOpen, setMembershipOpen] = useState(false);
+  const [remindMeOpen, setRemindMeOpen] = useState(false);
   // Stage 28 — this page navigates away immediately after a successful
   // delete, so its own Undo toast can't persist here; instead it hands the
   // recovery id off to /library via setPendingUndoToast and only shows a
@@ -163,7 +168,7 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
     setDeleteRequested(false);
     const current = library.items.find((candidate) => candidate.id === itemId);
     if (!current) return;
-    const result = await deleteItemWithRecovery(current, userId, library, collectionsStore, activity);
+    const result = await deleteItemWithRecovery(current, userId, library, collectionsStore, activity, remindersStore);
     if (!result.ok) {
       setResultToast(result.errorText ?? "Couldn't delete this item. Try again.");
       return;
@@ -223,6 +228,16 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
                 >
                   <StarIcon filled={item.favorite} width={20} height={20} />
                 </button>
+                {media && (
+                  <button
+                    type="button"
+                    onClick={() => setRemindMeOpen(true)}
+                    aria-label={`Remind me to continue ${item.title}`}
+                    className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  >
+                    <BellIcon width={18} height={18} />
+                  </button>
+                )}
                 <ItemActionsMenu
                   label={item.title}
                   editLabel="Edit item"
@@ -357,6 +372,22 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
       />
 
       {resultToast && <UndoToast message={resultToast} onDismiss={() => setResultToast(null)} />}
+
+      {media && (
+        <RemindMeContinueDialog
+          isOpen={remindMeOpen}
+          libraryItemId={item.id}
+          itemTitle={item.title}
+          existing={
+            remindersStore.reminders.find(
+              (reminder): reminder is ContinueReminder => reminder.kind === "continue" && reminder.libraryItemId === item.id && !reminder.dismissedAt,
+            ) ?? null
+          }
+          onClose={() => setRemindMeOpen(false)}
+          onCreate={(libraryItemId, remindAt) => remindersStore.createReminder({ kind: "continue", libraryItemId, remindAt })}
+          onUpdateTime={remindersStore.updateContinueTime}
+        />
+      )}
     </DetailShell>
   );
 }
