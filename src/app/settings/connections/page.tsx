@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { getConnection } from "@/lib/integrations/connections";
+import { getConnection, getAllowAniListWrites } from "@/lib/integrations/connections";
 import { toConnectionSummary } from "@/lib/integrations/types";
 import { SettingsShell } from "@/components/SettingsShell";
 import { ConnectionsPanel } from "@/components/ConnectionsPanel";
@@ -46,6 +46,7 @@ export default async function ConnectionsPage({ searchParams }: ConnectionsPageP
     connectionRow = null;
   }
   const summary = toConnectionSummary(connectionRow, "anilist");
+  const initialAllowWrites = connectionRow ? getAllowAniListWrites(connectionRow) : false;
 
   return (
     <SettingsShell active="connections" title="Connections">
@@ -53,6 +54,7 @@ export default async function ConnectionsPage({ searchParams }: ConnectionsPageP
         initialSummary={summary}
         justConnected={params.anilist === "connected"}
         connectError={params.anilist_error}
+        initialAllowWrites={initialAllowWrites}
       />
     </SettingsShell>
   );

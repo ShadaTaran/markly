@@ -116,16 +116,26 @@ All creation paths funnel through one shared `createAndLinkItem` in `TrackingSet
 
 Signed-in account-mode users can optionally connect an [AniList](https://anilist.co/) account to import and manually sync their Anime/Manga tracking into Markly. This is entirely separate from Markly's own account system — it's an AniList-specific integration, requires you to already be signed into Markly, and only ever writes into *your own* Markly library.
 
-**What it does today:**
+**Importing and syncing from AniList (unchanged since Stage 17):**
 
-- **AniList → Markly only.** Connecting and syncing never writes anything back to your AniList account. Markly reads your AniList lists; it never calls AniList's list-mutation API.
 - **First import is opt-in and previewed.** After connecting, Markly shows how many Anime/Manga entries it found before importing anything — nothing is pulled in automatically.
 - **Manual "Sync Now" only.** There is no background sync, polling, or webhook. You decide when to pull newer AniList state into Markly.
 - **Matching is by AniList media ID**, reusing the same `catalogSource` reference Markly's existing AniList search/autofill already stores — an item added via search and later found in your AniList list is recognized as the same item, never duplicated.
-- **Conflicts are surfaced, not guessed.** If both Markly and AniList have changed a tracked value since the last sync, Markly shows you both values and lets you pick, rather than silently picking a "newest wins" side.
 - **REPEATING lists (rewatching/rereading)** map to Markly's `in_progress` status — Markly has no separate "rewatching" status yet, so this is a deliberate simplification, not a full mapping. The original AniList status is retained internally so this can be revisited later without re-importing.
-- **Manga chapter decimals are protected.** Markly allows split-release chapter numbers (e.g. `12.5`); AniList's progress is always a whole number. If your Markly progress has a fractional part and AniList disagrees, Markly treats it as a conflict for you to resolve rather than silently rounding it away.
 - **Personal AniList scores** are requested in AniList's `POINT_10_DECIMAL` format (0–10 with one decimal) regardless of your AniList account's configured scoring style, then rounded to Markly's nearest half-point. AniList's "no score" (0) maps to Markly's "Unrated," never to a literal 0.
+- **Seasonal-numbered items** (see "Season-Aware Episode Tracking" below) are never auto-advanced by AniList's absolute episode count — AniList only ever sees/writes a single running number, which isn't the same thing as a season+episode pair, so progress is left for you to reconcile manually on those items rather than silently faked.
+
+**Sending changes to AniList — manual review only, off by default:**
+
+Markly can also send your progress, status, and rating changes back to AniList, but only when you turn this on and only when you explicitly review and confirm each change — there is no automatic or background write-back of any kind.
+
+- **Off by default.** A separate "Allow Markly to update AniList" toggle on the Connections page must be turned on before any outbound write is possible; leaving it off keeps the connection exactly as read-only as before Stage 30, and the server refuses to send anything even if a client request claims otherwise.
+- **"Sync Now" opens a review screen, not a sync.** It fetches your current AniList state and shows a per-field comparison (Markly value vs. AniList value) for progress, status, and rating on each item, with an explicit **Keep Markly** / **Keep AniList** / **No change** choice per field. Nothing changes until you click **Apply selected changes**.
+- **No winner by magnitude.** If both sides changed since the last sync, Markly shows you both values and asks — a higher progress number does not automatically win, since a re-watch, a correction, or a deliberate rollback all look like "the number went down" and none of them should be silently overridden.
+- **Re-checked immediately before applying.** Right before each item is written, Markly re-fetches both the local row and the AniList entry and compares them against what the preview showed; if either changed in the meantime (including another device, a new AniList entry created after the preview, or one deleted), that item is skipped with an explanation instead of being applied against stale data.
+- **Scope is deliberately narrow.** Only progress, status, and rating go outbound — no notes, custom lists, repeat counts, or dates. Only anime and manga entries with a real AniList link are eligible; seasonal-numbered progress and fractional manga chapters are never sent (shown as "not supported for this field" rather than rounded, floored, or faked into an absolute number).
+- **Never deletes.** Removing an item from Markly, undoing a deletion, or disconnecting AniList never deletes or modifies the corresponding AniList list entry.
+- **Applied one item at a time**, never as a single all-or-nothing batch — a failure or a stale value on one item doesn't block the rest, and the results screen reports each item's outcome individually.
 
 **Setting up an AniList developer application (required to use this feature):**
 
@@ -476,8 +486,12 @@ src/
   lib/cloud/      Supabase data-access + row/LibraryItem mapping + local→cloud migration
   lib/supabase/   Supabase browser/server client factories, env config, and the server-only admin
                   (Secret API Key) client used only by the extension-facing API
-  lib/integrations/         Provider-neutral connection storage + token encryption
-  lib/integrations/anilist/ AniList OAuth, GraphQL client, mapping, and sync engine
+  lib/integrations/         Provider-neutral connection storage + token encryption + the AniList
+                  write-preference flag (stored in external_connections.provider_metadata)
+  lib/integrations/anilist/ AniList OAuth, GraphQL client, inbound mapping/sync engine, status/score
+                  conversion (score.ts), three-way field reconciliation (reconciliation.ts), and the
+                  manual write-back preview/apply orchestration (writeback.ts) — see "Connected
+                  Accounts (AniList)" above
   lib/extension/  Device pairing, device-token/pairing-code hashing, the pairing-endpoint rate
                   limiter, tracking-source persistence (incl. the atomic first-link claim), smart
                   auto-linking (auto-link.ts), detected-work → LibraryItem mapping for the
@@ -514,6 +528,10 @@ scripts/
                   blocking), relationship transfer, and the merge RPC's ownership/lock-ordering/server-
                   authoritative-progress control flow (see "Safe Duplicate Detection & Manual Merge"
                   above) — run with `node scripts/verify-duplicate-merge.mjs`
+  verify-anilist-writeback.mjs  Standalone check for AniList status/rating mapping, the three-way
+                  (baseline/local/remote) field reconciliation model, and the apply orchestration's
+                  staleness/idempotency/ownership guards (see "Connected Accounts (AniList)" above) —
+                  run with `node scripts/verify-anilist-writeback.mjs`
 supabase/
   migrations/     SQL schema + Row Level Security policies for the optional Supabase backend
 extension/
@@ -538,8 +556,9 @@ extension/
 
 - OAuth sign-in for Markly itself (Google/GitHub/etc. — distinct from the AniList connected-account feature above)
 - Additional connected providers (Trakt, Steam) on the same connected-accounts architecture
-- Background/automatic AniList sync (currently manual "Sync Now" only)
-- Markly → AniList outbound writes (currently inbound-only)
+- Background/automatic AniList write-back (currently manual review-and-apply only)
+- AniList outbound fields beyond progress/status/rating (notes, repeat counts, custom lists, dates)
+- Other providers on the write-back path (MyAnimeList, Kitsu, Trakt, Goodreads)
 - A real Stage 19 site adapter (NovelPhoenix or similar) using `optional_host_permissions`
 - Firefox/Edge extension support (Chromium-based Manifest V3 only for now)
 - Bookmark/library import/export

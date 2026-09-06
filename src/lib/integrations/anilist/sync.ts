@@ -28,6 +28,7 @@ import {
   mapAniListScore,
   buildSyncBaseline,
   readSyncBaseline,
+  applyInboundPersonalTracking,
   type AniListEntryFields,
 } from "@/lib/integrations/anilist/mapping";
 import type { SyncConflict, SyncResult } from "@/lib/integrations/types";
@@ -181,24 +182,11 @@ function handleExistingItem(
   const applyUpdate = () => {
     const updatedAt = syncedAt;
     // fetchExistingRows only ever fetches type IN ('anime','manga'), so
-    // `current` is guaranteed to be one of those two here — the switch is
-    // still exhaustive over the full MediaItem union (no cast) so an
-    // unrelated type can never silently fall through.
-    let patched: MediaItem;
-    switch (current.type) {
-      case "anime":
-      case "series":
-        patched = { ...current, status: incoming.status, rating: incoming.rating, currentEpisode: incoming.progress, updatedAt };
-        break;
-      case "manga":
-        patched = { ...current, status: incoming.status, rating: incoming.rating, currentChapter: incoming.progress, updatedAt };
-        break;
-      case "novel":
-      case "movie":
-      case "game":
-        patched = current;
-        break;
-    }
+    // `current` is guaranteed to be one of those two here. Delegates to
+    // the shared applyInboundPersonalTracking (anilist/mapping.ts) so the
+    // Stage 25 seasonal-numbering guard lives in exactly one place —
+    // see that function's own doc comment.
+    const { patched } = applyInboundPersonalTracking(current, incoming, updatedAt);
     // Same reasoning as handleNewItem: a first bulk import must not
     // synthesize progress/status/rating activity representing AniList
     // state that predates this import — only later syncs, where these
@@ -235,8 +223,24 @@ function handleExistingItem(
   // that — surface it as a conflict instead of overwriting.
   const decimalGuard = kind === "manga" && !Number.isInteger(marklyProgress) && marklyProgress !== incoming.progress;
 
+  // Stage 25 rule: AniList's progress is always an absolute count, but a
+  // seasonal item's own currentEpisode is season-relative — the two
+  // numbers are never comparable at all (e.g. Markly "3" vs AniList "27"
+  // says nothing about whether anything actually changed). Comparing them
+  // as if they were the same unit would treat nearly every seasonal item
+  // as "changed" on every single sync, permanently drowning it in bogus
+  // progress conflicts — and if a user ever accepted one of those, the
+  // unconditional overwrite this guard replaces would have corrupted
+  // their seasonal position. Progress is therefore excluded from every
+  // comparison below for a seasonal item; status and rating still compare
+  // and sync normally, independent of this.
+  const progressComparable = !((current.type === "anime" || current.type === "series") && current.episodeNumbering === "seasonal");
+
   if (!baseline) {
-    const differs = current.status !== incoming.status || marklyProgress !== incoming.progress || (current.rating ?? undefined) !== incoming.rating;
+    const differs =
+      current.status !== incoming.status ||
+      (progressComparable && marklyProgress !== incoming.progress) ||
+      (current.rating ?? undefined) !== incoming.rating;
     if (!differs) {
       recordBaselineOnly();
       acc.unchanged += 1;
@@ -250,17 +254,27 @@ function handleExistingItem(
       pushConflict("status", marklyStatusLabel(current.status), anilistStatusLabel(entry.status));
       return;
     }
-    if (marklyProgress !== incoming.progress) {
+    if (progressComparable && marklyProgress !== incoming.progress) {
       pushConflict("progress", progressLabel(kind, marklyProgress), progressLabel(kind, incoming.progress));
       return;
     }
-    pushConflict("rating", String(current.rating ?? "Unrated"), String(incoming.rating ?? "Unrated"));
+    if ((current.rating ?? undefined) !== incoming.rating) {
+      pushConflict("rating", String(current.rating ?? "Unrated"), String(incoming.rating ?? "Unrated"));
+      return;
+    }
+    // Only reachable for a seasonal item whose progress differs but whose
+    // status/rating do not — nothing comparable actually changed.
+    recordBaselineOnly();
+    acc.unchanged += 1;
     return;
   }
 
   const expectedStatus = mapAniListStatus(baseline.status).markly;
   const expectedRating = mapAniListScore(baseline.score);
-  const marklyChanged = current.status !== expectedStatus || marklyProgress !== baseline.progress || (current.rating ?? undefined) !== expectedRating;
+  const marklyChanged =
+    current.status !== expectedStatus ||
+    (progressComparable && marklyProgress !== baseline.progress) ||
+    (current.rating ?? undefined) !== expectedRating;
   const anilistChanged = entry.status !== baseline.status || (entry.progress ?? 0) !== baseline.progress || (entry.score ?? null) !== baseline.score;
 
   if (!anilistChanged) {
@@ -281,11 +295,18 @@ function handleExistingItem(
     pushConflict("status", marklyStatusLabel(current.status), anilistStatusLabel(entry.status));
     return;
   }
-  if (marklyProgress !== incoming.progress) {
+  if (progressComparable && marklyProgress !== incoming.progress) {
     pushConflict("progress", progressLabel(kind, marklyProgress), progressLabel(kind, incoming.progress));
     return;
   }
-  pushConflict("rating", String(current.rating ?? "Unrated"), String(incoming.rating ?? "Unrated"));
+  if ((current.rating ?? undefined) !== incoming.rating) {
+    pushConflict("rating", String(current.rating ?? "Unrated"), String(incoming.rating ?? "Unrated"));
+    return;
+  }
+  // Only reachable for a seasonal item: marklyChanged was true purely
+  // because progress is incomparable, but status/rating actually agree —
+  // safe to just refresh the baseline, same as the normal update path.
+  applyUpdate();
 }
 
 const MARKLY_STATUS_LABELS: Record<MediaItem["status"], string> = {

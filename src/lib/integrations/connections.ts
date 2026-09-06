@@ -85,3 +85,29 @@ export function isConnectionExpired(row: ExternalConnectionRow): boolean {
   if (!row.token_expires_at) return false;
   return new Date(row.token_expires_at).getTime() <= Date.now();
 }
+
+/**
+ * Stage 30 — the "Allow Markly to update AniList" preference. Stored in
+ * `provider_metadata` (already existed, reserved for exactly this —
+ * no migration needed) rather than a new column. Default OFF: a
+ * connection with no metadata key, or a malformed one, is always
+ * treated as writes-disabled, never writes-enabled — the safe default
+ * on any ambiguity.
+ */
+export function getAllowAniListWrites(row: ExternalConnectionRow): boolean {
+  return row.provider_metadata?.allowAniListWrites === true;
+}
+
+export async function setAllowAniListWrites(supabase: SupabaseClient, userId: string, allow: boolean): Promise<void> {
+  const connection = await getConnection(supabase, userId, "anilist");
+  if (!connection) throw new Error("not_connected");
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      provider_metadata: { ...connection.provider_metadata, allowAniListWrites: allow },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId)
+    .eq("provider", "anilist");
+  if (error) throw error;
+}

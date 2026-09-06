@@ -1,4 +1,4 @@
-import type { TrackingStatus } from "@/types/library-item";
+import type { TrackingStatus, MediaItem } from "@/types/library-item";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { normalizeDescription, normalizeStringArray } from "@/lib/metadata/sanitize";
 import { normalizeRating } from "@/lib/tracking";
@@ -44,6 +44,38 @@ export function mapAniListStatus(status: string): { markly: TrackingStatus; wasR
       return { markly: "in_progress", wasRepeating: true };
     default:
       return { markly: "planned", wasRepeating: false };
+  }
+}
+
+/**
+ * AniList's own live `MediaListStatus` enum (confirmed via GraphQL
+ * introspection against https://graphql.anilist.co, not assumed):
+ * CURRENT, PLANNING, COMPLETED, DROPPED, PAUSED, REPEATING.
+ */
+export type AniListMediaListStatus = "CURRENT" | "PLANNING" | "COMPLETED" | "DROPPED" | "PAUSED" | "REPEATING";
+
+/**
+ * Stage 30 — the reverse of mapAniListStatus, for outbound writes. Kept in
+ * this same module (not a separate file) so status mapping stays
+ * centralized in exactly one place for both directions, never scattered
+ * string comparisons at call sites. REPEATING is deliberately never a
+ * write target: Markly has no "rewatching" concept of its own to map
+ * *from*, so an outbound status write can only ever produce one of the
+ * five direct equivalents below — never invents a repeat count or
+ * REPEATING status Markly never asked for.
+ */
+export function mapMarklyStatusToAniList(status: TrackingStatus): AniListMediaListStatus {
+  switch (status) {
+    case "in_progress":
+      return "CURRENT";
+    case "planned":
+      return "PLANNING";
+    case "completed":
+      return "COMPLETED";
+    case "dropped":
+      return "DROPPED";
+    case "on_hold":
+      return "PAUSED";
   }
 }
 
@@ -108,6 +140,58 @@ export function mapEntryToPersonalTracking(entry: AniListEntryFields): AniListPe
     progress: entry.progress ?? 0,
     rating: mapAniListScore(entry.score),
   };
+}
+
+export interface InboundApplyResult {
+  patched: MediaItem;
+  /** False when progress was intentionally NOT applied (see reason). Status/rating are unaffected by this and always apply when eligible. */
+  progressApplied: boolean;
+  progressSkippedReason?: "seasonal_numbering";
+}
+
+/**
+ * The ONE place AniList→Markly personal-tracking fields get written onto a
+ * MediaItem — used by both the existing Stage 17 "Sync Now" pathway
+ * (anilist/sync.ts) and Stage 30's per-field reconciliation apply
+ * (anilist/writeback.ts), so the seasonal-numbering guard below can never
+ * drift between the two.
+ *
+ * Stage 25 rule, applied here for the first time in the inbound path:
+ * AniList has no seasonal concept — its `progress` is always one
+ * continuous absolute count. For an item with `episodeNumbering ===
+ * "seasonal"`, writing that number into `currentEpisode` would silently
+ * fabricate a wrong seasonal position (e.g. turning "S2E3" into
+ * "Episode 27") with no authoritative S×E↔absolute mapping to justify it.
+ * So progress is simply left untouched for a seasonal item — status and
+ * rating still apply independently, since neither depends on the
+ * numbering model at all.
+ */
+export function applyInboundPersonalTracking(current: MediaItem, incoming: AniListPersonalTracking, updatedAt: string): InboundApplyResult {
+  switch (current.type) {
+    case "anime":
+    case "series": {
+      if (current.episodeNumbering === "seasonal") {
+        return {
+          patched: { ...current, status: incoming.status, rating: incoming.rating, updatedAt },
+          progressApplied: false,
+          progressSkippedReason: "seasonal_numbering",
+        };
+      }
+      return {
+        patched: { ...current, status: incoming.status, rating: incoming.rating, currentEpisode: incoming.progress, updatedAt },
+        progressApplied: true,
+      };
+    }
+    case "manga":
+      return {
+        patched: { ...current, status: incoming.status, rating: incoming.rating, currentChapter: incoming.progress, updatedAt },
+        progressApplied: true,
+      };
+    case "novel":
+    case "movie":
+    case "game":
+      return { patched: current, progressApplied: false };
+  }
 }
 
 /**

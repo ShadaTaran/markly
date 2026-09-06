@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ConnectionSummary, SyncConflict, SyncResult } from "@/lib/integrations/types";
+import type { ConnectionSummary } from "@/lib/integrations/types";
+import { AniListReconcilePanel } from "@/components/AniListReconcilePanel";
 
 interface ConnectionsPanelProps {
   initialSummary: ConnectionSummary;
   justConnected: boolean;
   connectError?: string;
+  /** Stage 30 — default OFF (§3/§16); undefined only if the connection couldn't be read at all, treated the same as false. */
+  initialAllowWrites?: boolean;
 }
 
 interface PreviewData {
@@ -36,24 +39,16 @@ function formatRelative(iso: string | null): string {
   return `${days}d ago`;
 }
 
-function SummaryLine({ result }: { result: SyncResult }) {
-  return (
-    <p className="text-sm text-muted-foreground">
-      {result.imported} imported · {result.updated} updated · {result.conflicts.length} conflicts · {result.unchanged}{" "}
-      unchanged
-    </p>
-  );
-}
-
-export function ConnectionsPanel({ initialSummary, justConnected, connectError }: ConnectionsPanelProps) {
+export function ConnectionsPanel({ initialSummary, justConnected, connectError, initialAllowWrites }: ConnectionsPanelProps) {
   const [summary, setSummary] = useState(initialSummary);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [selection, setSelection] = useState({ anime: true, manga: true });
-  const [busy, setBusy] = useState<"preview" | "import" | "sync" | "disconnect" | "resolve" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "import" | "disconnect" | "writePref" | null>(null);
   const [error, setError] = useState<string | undefined>(connectError ? CONNECT_ERROR_MESSAGES[connectError] ?? "Something went wrong connecting AniList." : undefined);
-  const [result, setResult] = useState<SyncResult | null>(null);
-  const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const [disconnectConfirm, setDisconnectConfirm] = useState(false);
+  const [allowWrites, setAllowWrites] = useState(initialAllowWrites ?? false);
+  const [showEnableWritesConfirm, setShowEnableWritesConfirm] = useState(false);
+  const [showReconcile, setShowReconcile] = useState(false);
 
   const isFirstImport = summary.connected && !summary.reconnectRequired && summary.lastSyncedAt === null;
 
@@ -98,8 +93,6 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
         if (data.error === "reconnect_required") setSummary((current) => ({ ...current, reconnectRequired: true }));
         return;
       }
-      setResult(data);
-      setConflicts(data.conflicts ?? []);
       setPreview(null);
       setSummary((current) => ({ ...current, lastSyncedAt: new Date().toISOString() }));
     } catch {
@@ -109,63 +102,34 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
     }
   }
 
-  async function runSync() {
-    setBusy("sync");
+  async function saveAllowWrites(allow: boolean) {
+    setBusy("writePref");
     setError(undefined);
     try {
-      const response = await fetch("/api/integrations/anilist/sync", { method: "POST" });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(errorMessageFor(data.error));
-        if (data.error === "reconnect_required") setSummary((current) => ({ ...current, reconnectRequired: true }));
-        return;
-      }
-      setResult(data);
-      setConflicts(data.conflicts ?? []);
-      setSummary((current) => ({ ...current, lastSyncedAt: new Date().toISOString() }));
-    } catch {
-      setError("AniList could not be reached. Your Markly library was not changed.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function resolveConflict(conflict: SyncConflict, resolution: "markly" | "anilist") {
-    setBusy("resolve");
-    setError(undefined);
-    try {
-      const response = await fetch("/api/integrations/anilist/resolve", {
+      const response = await fetch("/api/integrations/anilist/write-preference", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          itemId: conflict.itemId,
-          resolution,
-          anilist: {
-            mediaId: conflict.anilist.mediaId,
-            status: conflict.anilist.status,
-            progress: conflict.anilist.progress,
-            score: conflict.anilist.score,
-            updatedAt: conflict.anilist.updatedAt,
-          },
-        }),
+        body: JSON.stringify({ allow }),
       });
       if (!response.ok) {
-        const data = await response.json();
-        setError(errorMessageFor(data.error));
+        setError("Couldn't save that preference. Try again.");
         return;
       }
-      setConflicts((current) => current.filter((entry) => entry !== conflict));
+      setAllowWrites(allow);
     } catch {
-      setError("AniList could not be reached. That conflict was not resolved.");
+      setError("Couldn't save that preference. Try again.");
     } finally {
       setBusy(null);
+      setShowEnableWritesConfirm(false);
     }
   }
 
-  async function applyAllAniList() {
-    for (const conflict of conflicts) {
-      await resolveConflict(conflict, "anilist");
+  function handleWritesToggle(next: boolean) {
+    if (next) {
+      setShowEnableWritesConfirm(true);
+      return;
     }
+    void saveAllowWrites(false);
   }
 
   async function disconnect() {
@@ -179,8 +143,7 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
       }
       setSummary({ connected: false, provider: "anilist", username: null, lastSyncedAt: null, reconnectRequired: false });
       setPreview(null);
-      setResult(null);
-      setConflicts([]);
+      setAllowWrites(false);
       setDisconnectConfirm(false);
     } catch {
       setError("Couldn't disconnect AniList. Try again.");
@@ -230,11 +193,11 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
           <>
             <button
               type="button"
-              onClick={runSync}
+              onClick={() => setShowReconcile(true)}
               disabled={busy !== null}
               className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
             >
-              {busy === "sync" ? "Syncing…" : "Sync Now"}
+              Sync Now
             </button>
             {!disconnectConfirm ? (
               <button
@@ -280,6 +243,52 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
         )}
       </div>
 
+      {summary.connected && !summary.reconnectRequired && !isFirstImport && (
+        <div className="mt-4 border-t border-border pt-3">
+          <label className="flex items-start gap-2.5 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={allowWrites}
+              disabled={busy !== null}
+              onChange={(event) => handleWritesToggle(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-border"
+            />
+            <span>
+              Allow Markly to update AniList
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Lets a reviewed Sync Now send progress, status, and rating changes to your AniList list. Markly never sends anything on its own.
+              </span>
+            </span>
+          </label>
+
+          {showEnableWritesConfirm && (
+            <div className="mt-2 rounded-md border border-border bg-surface-hover p-3">
+              <p className="text-sm text-foreground">Allow Markly to update AniList?</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                When you review and confirm a sync, Markly will be able to update progress, status, and ratings on your AniList list.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEnableWritesConfirm(false)}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveAllowWrites(true)}
+                  disabled={busy !== null}
+                  className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:bg-foreground/85 disabled:opacity-60"
+                >
+                  {busy === "writePref" ? "Saving…" : "Allow updates"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {preview && (
         <div className="mt-4 rounded-md border border-border p-3">
           <p className="text-sm text-foreground">
@@ -317,59 +326,11 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError }
         </div>
       )}
 
-      {result && (
-        <div className="mt-4 rounded-md border border-border p-3">
-          <p className="text-sm font-medium text-foreground">Sync complete</p>
-          <div className="mt-1">
-            <SummaryLine result={result} />
-          </div>
-        </div>
-      )}
-
-      {conflicts.length > 0 && (
-        <div className="mt-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Conflicts</h3>
-            <button
-              type="button"
-              onClick={applyAllAniList}
-              disabled={busy !== null}
-              className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
-            >
-              Apply all AniList values
-            </button>
-          </div>
-          <ul className="space-y-2">
-            {conflicts.map((conflict) => (
-              <li key={`${conflict.itemId}-${conflict.field}`} className="rounded-md border border-border p-3">
-                <p className="text-sm font-medium text-foreground">{conflict.title}</p>
-                <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground/70">{conflict.field}</p>
-                <div className="mt-1 space-y-0.5 text-sm text-muted-foreground">
-                  <p>Markly: {conflict.markly.value}</p>
-                  <p>AniList: {conflict.anilist.value}</p>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => resolveConflict(conflict, "markly")}
-                    disabled={busy !== null}
-                    className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
-                  >
-                    Keep Markly
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => resolveConflict(conflict, "anilist")}
-                    disabled={busy !== null}
-                    className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-                  >
-                    Use AniList
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {showReconcile && (
+        <AniListReconcilePanel
+          onClose={() => setShowReconcile(false)}
+          onApplied={() => setSummary((current) => ({ ...current, lastSyncedAt: new Date().toISOString() }))}
+        />
       )}
     </div>
   );

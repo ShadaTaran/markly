@@ -8,7 +8,7 @@ import { generateId } from "@/lib/utils";
 import type { LibraryItemRow } from "@/lib/supabase/database.types";
 import type { MediaItem } from "@/types/library-item";
 import type { ActivityEventInput } from "@/types/activity";
-import { mapAniListScore, mapAniListStatus, buildSyncBaseline } from "@/lib/integrations/anilist/mapping";
+import { mapAniListScore, mapAniListStatus, buildSyncBaseline, applyInboundPersonalTracking } from "@/lib/integrations/anilist/mapping";
 
 interface ResolveRequestBody {
   itemId?: string;
@@ -85,25 +85,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const rating = mapAniListScore(anilist.score);
-  const progress = anilist.progress ?? 0;
-  const status = mapAniListStatus(anilist.status).markly;
-
-  let patched: MediaItem;
-  switch (current.type) {
-    case "anime":
-    case "series":
-      patched = { ...current, status, rating, currentEpisode: progress, updatedAt: syncedAt };
-      break;
-    case "manga":
-      patched = { ...current, status, rating, currentChapter: progress, updatedAt: syncedAt };
-      break;
-    case "novel":
-    case "movie":
-    case "game":
-      patched = current;
-      break;
-  }
+  // Delegates to the shared applyInboundPersonalTracking (anilist/mapping.ts)
+  // so the Stage 25 seasonal-numbering guard lives in exactly one place —
+  // see that function's own doc comment. A seasonal item's progress is
+  // never overwritten here even if the user picks "Use AniList".
+  const { patched } = applyInboundPersonalTracking(
+    current,
+    { status: mapAniListStatus(anilist.status).markly, progress: anilist.progress ?? 0, rating: mapAniListScore(anilist.score) },
+    syncedAt,
+  );
 
   const events: ActivityEventInput[] = diffMediaTrackingEvents(current.id, current, patched).map((event) => ({
     ...event,
