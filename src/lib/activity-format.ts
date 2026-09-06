@@ -112,12 +112,18 @@ export function getActivitySourceLabel(event: ActivityEvent): string | undefined
   }
 }
 
-/** Compact human-readable relative time — e.g. "3m ago", "2h ago", "Yesterday". */
-export function formatRelativeTime(iso: string): string {
+/**
+ * Compact human-readable relative time — e.g. "3m ago", "2h ago",
+ * "Yesterday". `now` is injectable (defaults to the real current time) so
+ * every caller that needs deterministic output — Stage 32's Dashboard
+ * cards and their tests included — can pin it instead of scattering
+ * `Date.now()` calls of their own.
+ */
+export function formatRelativeTime(iso: string, now: Date = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
 
-  const diffMs = Date.now() - date.getTime();
+  const diffMs = now.getTime() - date.getTime();
   const diffMinutes = Math.floor(diffMs / 60000);
 
   if (diffMinutes < 1) return "Just now";

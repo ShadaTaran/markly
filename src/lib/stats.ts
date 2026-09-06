@@ -1,5 +1,4 @@
 import type { LibraryItem, MediaItem, SupportedItemType } from "@/types/library-item";
-import type { ActivityEvent } from "@/types/activity";
 import { SUPPORTED_ITEM_TYPES } from "@/types/library-item";
 import { isMediaItem } from "@/lib/item-detail";
 
@@ -48,41 +47,3 @@ export function getCurrentlyTrackingCounts(items: LibraryItem[]): CurrentlyTrack
   };
 }
 
-function isSameMonth(iso: string, reference: Date): boolean {
-  const date = new Date(iso);
-  return date.getFullYear() === reference.getFullYear() && date.getMonth() === reference.getMonth();
-}
-
-export interface MonthlyStats {
-  progressUpdates: number;
-  itemsCompleted: number;
-  /** Average of current ratings for items rated at least once this month; undefined if none. */
-  averageRating: number | undefined;
-}
-
-/** Everything here is derived from the activity log, so it reflects real user actions rather than current item state alone. */
-export function getMonthlyStats(events: ActivityEvent[], items: LibraryItem[], now: Date = new Date()): MonthlyStats {
-  const thisMonthEvents = events.filter((event) => isSameMonth(event.timestamp, now));
-
-  const progressUpdates = thisMonthEvents.filter((event) => event.type === "progress_updated").length;
-
-  const completedItemIds = new Set(
-    thisMonthEvents
-      .filter((event) => event.type === "status_updated" && event.newValue === "completed")
-      .map((event) => event.itemId),
-  );
-
-  const ratedItemIds = new Set(
-    thisMonthEvents
-      .filter((event) => event.type === "rating_updated" && event.newValue !== undefined)
-      .map((event) => event.itemId),
-  );
-
-  const ratings: number[] = [];
-  items.filter(isMediaItem).forEach((item) => {
-    if (ratedItemIds.has(item.id) && item.rating !== undefined) ratings.push(item.rating);
-  });
-  const averageRating = ratings.length > 0 ? ratings.reduce((sum, value) => sum + value, 0) / ratings.length : undefined;
-
-  return { progressUpdates, itemsCompleted: completedItemIds.size, averageRating };
-}

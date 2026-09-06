@@ -18,10 +18,18 @@ export function normalizeUrl(raw: string): string {
   return hasProtocol ? trimmed : `https://${trimmed}`;
 }
 
+/**
+ * Rejects userinfo (`https://user:pass@host/...`) alongside the existing
+ * scheme check — a credential-bearing URL is never something Markly needs
+ * to store or navigate to for a personal bookmark/resume link, and letting
+ * one through would render a deceptive or sensitive href verbatim (Stage
+ * 32 correctness review).
+ */
 export function isValidUrl(value: string): boolean {
   try {
-    const { protocol, hostname } = new URL(value);
+    const { protocol, hostname, username, password } = new URL(value);
     if (protocol !== "http:" && protocol !== "https:") return false;
+    if (username || password) return false;
     return hostname.length > 0 && (hostname.includes(".") || hostname === "localhost");
   } catch {
     return false;

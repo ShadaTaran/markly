@@ -79,15 +79,50 @@ function formatProgressValue(progress: NonNullable<TrackingSourceSummary["lastDe
 }
 
 /**
- * The one URL "Open Source" is ever allowed to open — prefers the stable
- * work URL Stage 21 may have derived (a chapter/episode page's own URL
- * moves every update; the work URL doesn't) over the latest raw detected
- * page, and validates whichever is used all over again regardless of
- * where it came from: only http/https, never javascript:/data:/file:/
- * malformed — see lib/website.ts's isValidUrl, reused rather than
- * reimplemented. Returns null (render no link at all) when neither is safe.
+ * True when two URLs share the same trusted host — www.-normalized exact
+ * hostname equality (reusing getSourceHostname, the same normalization
+ * already used for display), never a broader "same site" notion. No
+ * Public Suffix List, no sibling-subdomain allowance: the tracking
+ * architecture has no adapter that legitimately needs one (MangaDex's own
+ * adapter, for instance, only ever matches an exact hostname — see
+ * MANGADEX_HOSTNAMES). A bare hostname comparison also keeps a dev
+ * `localhost` TrackingSource working regardless of port.
+ */
+function sameTrustedHost(urlA: string, urlB: string): boolean {
+  const hostA = getSourceHostname(urlA);
+  const hostB = getSourceHostname(urlB);
+  return hostA !== null && hostB !== null && hostA === hostB;
+}
+
+/**
+ * The one URL "Open Source"/Dashboard Continue is ever allowed to open.
+ *
+ * Trust invariant (Stage 32 correctness review): lastDetectedMetadata.
+ * workUrl is written from page-observed signals (a same-site anchor a
+ * trusted adapter matched, or a path segment stripped from the tracked
+ * page's own URL — see extension/src/tracking/universal/detected-
+ * metadata.ts and adapters/mangadex.ts, both of which can only ever
+ * produce a same-origin value today) but the SERVER'S OWN validation
+ * (lib/extension/detected-metadata.ts's parseHttpUrl) only checks that
+ * it's a well-formed http/https URL — it does not, and structurally
+ * cannot, know whether a future adapter or a direct API caller kept that
+ * same-origin guarantee. Rather than trust that upstream invariant
+ * forever, this function re-derives it at the one place a workUrl gains
+ * real navigation authority: workUrl is only ever used when it shares
+ * sourceUrl's own trusted host (sameTrustedHost, above). A workUrl for an
+ * unrelated host is silently ignored — never opened, never surfaced as
+ * an error — falling back to sourceUrl exactly as if no workUrl had ever
+ * been detected. sourceUrl on its own still passes through the same
+ * isValidUrl check every external target requires (only http/https,
+ * never javascript:/data:/file:/credential-bearing/malformed).
  */
 export function getSafeOpenSourceUrl(source: Pick<TrackingSourceSummary, "sourceUrl" | "lastDetectedMetadata">): string | null {
-  const candidate = source.lastDetectedMetadata?.workUrl ?? source.sourceUrl;
-  return candidate && isValidUrl(candidate) ? candidate : null;
+  const safeSourceUrl = source.sourceUrl && isValidUrl(source.sourceUrl) ? source.sourceUrl : null;
+
+  const workUrl = source.lastDetectedMetadata?.workUrl;
+  if (workUrl && isValidUrl(workUrl) && safeSourceUrl && sameTrustedHost(workUrl, safeSourceUrl)) {
+    return workUrl;
+  }
+
+  return safeSourceUrl;
 }

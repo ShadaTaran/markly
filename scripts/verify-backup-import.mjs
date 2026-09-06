@@ -125,8 +125,9 @@ const PROGRESS_KINDS = new Set(["episode", "chapter", "page", "percent", "playti
 // ============================================================
 function isValidUrl(value) {
   try {
-    const { protocol, hostname } = new URL(value);
+    const { protocol, hostname, username, password } = new URL(value);
     if (protocol !== "http:" && protocol !== "https:") return false;
+    if (username || password) return false;
     return hostname.length > 0 && (hostname.includes(".") || hostname === "localhost");
   } catch {
     return false;
