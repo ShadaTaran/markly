@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LibraryItem, MediaItem, MediaItemInput, SupportedItemType, WebsiteItem, WebsiteItemInput } from "@/types/library-item";
 import type { Collection, CollectionInput } from "@/types/collection";
+import type { SavedSmartView, SmartViewDefinition } from "@/types/smart-view";
+import { defaultSmartViewDefinition } from "@/types/smart-view";
 import { Header } from "@/components/Header";
 import { FilterTabs } from "@/components/FilterTabs";
 import { CollectionFilterBar } from "@/components/CollectionFilterBar";
@@ -13,24 +15,35 @@ import { CollectionMembershipDialog } from "@/components/CollectionMembershipDia
 import { LibraryItemGrid } from "@/components/LibraryItemGrid";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
-import { SortSelect } from "@/components/SortSelect";
-import { XIcon } from "@/components/icons";
+import { LibrarySortSelect } from "@/components/LibrarySortSelect";
+import { SmartViewsBar } from "@/components/SmartViewsBar";
+import { LibraryFiltersPanel } from "@/components/LibraryFiltersPanel";
+import { FilterChips } from "@/components/FilterChips";
+import { SaveSmartViewDialog } from "@/components/SaveSmartViewDialog";
+import { DeleteSmartViewDialog } from "@/components/DeleteSmartViewDialog";
+import { SlidersIcon, SearchIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
+import { EmptyState } from "@/components/EmptyState";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
-import { getCollectionOptions, getValidItemIds, type CollectionFilterValue } from "@/lib/collections";
+import { useSmartViews } from "@/hooks/useSmartViews";
+import { useActivitySummary } from "@/hooks/useActivitySummary";
+import { getValidItemIds } from "@/lib/collections";
+import { getCategories, getItemTypeOptions, getUniqueCategories, type TypeFilterValue } from "@/lib/library-items";
 import {
-  filterLibraryItems,
-  getCategories,
-  getItemTypeOptions,
-  getUniqueCategories,
-  sortLibraryItems,
-  type SortOption,
-  type TypeFilterValue,
-} from "@/lib/library-items";
+  BUILT_IN_SMART_VIEWS,
+  describeActiveFilters,
+  filterSmartViewItems,
+  findBuiltInSmartView,
+  isDefaultSmartViewDefinition,
+  removeFilterChip,
+  smartViewDefinitionsEqual,
+  sortSmartViewItems,
+  type SmartViewContext,
+} from "@/lib/smart-views";
 import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { findDuplicateGroups, type DuplicateGroup } from "@/lib/duplicate-detection";
@@ -44,6 +57,17 @@ interface LibraryViewProps {
 }
 
 type CollectionDialogState = { mode: "create" } | { mode: "edit"; collection: Collection } | null;
+type SaveViewDialogState = { mode: "create" } | { mode: "rename"; targetId: string } | null;
+
+function describeSaveViewError(result: { status: string; reason?: string }): string {
+  if (result.status === "duplicate_name") return "A view with this name already exists.";
+  if (result.status === "invalid_name") {
+    if (result.reason === "empty") return "View name is required.";
+    if (result.reason === "too_long") return "View name is too long.";
+    return "View name contains characters that aren't allowed.";
+  }
+  return "Couldn't save this view. Try again.";
+}
 
 export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const { user } = useAuth();
@@ -53,28 +77,46 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const { items } = library;
   const collectionsStore = useCollections(items, library.isHydrated, userId);
   const { collections } = collectionsStore;
+  const smartViewsStore = useSmartViews(userId);
+  const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
 
   // See DashboardView for why cloud mode needs an explicit loading state
   // that local mode doesn't.
-  const loading = Boolean(userId) && (!library.isHydrated || !collectionsStore.isHydrated || !activity.isHydrated);
-  const loadError = library.error ?? collectionsStore.error ?? activity.error;
+  const loading =
+    Boolean(userId) &&
+    (!library.isHydrated || !collectionsStore.isHydrated || !activity.isHydrated || !smartViewsStore.isHydrated || !activitySummaryStore.isHydrated);
+  const loadError = library.error ?? collectionsStore.error ?? activity.error ?? smartViewsStore.error ?? activitySummaryStore.error;
 
   function retryLoad() {
     library.reload();
     collectionsStore.reload();
     activity.reload();
+    smartViewsStore.reload();
+    activitySummaryStore.reload();
   }
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeType, setActiveType] = useState<TypeFilterValue>(ALL_FILTER);
-  const [activeStatus, setActiveStatus] = useState<StatusFilterValue>(ALL_FILTER);
+  // ============================================================
+  // Stage 31 — unified Smart View definition. The existing single-select
+  // Type/Status/Collection tabs below are thin UI over the SAME
+  // mediaTypes/statuses/collections array fields (always 0 or 1 elements
+  // when driven only by those tabs) that the Filters panel exposes as
+  // true multi-select — one filtering engine, never two parallel
+  // implementations (§2). "All Library" is simply this definition at its
+  // default value with no named view selected (§68) — selecting nothing
+  // here reproduces every existing Library filter/sort/search behavior
+  // exactly, unchanged.
+  // ============================================================
+  const [currentDefinition, setCurrentDefinition] = useState<SmartViewDefinition>(defaultSmartViewDefinition());
+  const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
+  const [showFiltersPanel, setShowFiltersPanel] = useState(false);
+  const [saveViewDialogState, setSaveViewDialogState] = useState<SaveViewDialogState>(null);
+  const [saveViewError, setSaveViewError] = useState<string | undefined>();
+  const [deleteViewTarget, setDeleteViewTarget] = useState<SavedSmartView | null>(null);
+
   const [selectedCategory, setSelectedCategory] = useState<string>(ALL_FILTER);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [sortOption, setSortOption] = useState<SortOption>("newest");
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryItem | null>(null);
 
-  const [activeCollectionId, setActiveCollectionId] = useState<CollectionFilterValue>(ALL_FILTER);
   const [collectionDialogState, setCollectionDialogState] = useState<CollectionDialogState>(null);
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<Collection | null>(null);
   const [membershipItem, setMembershipItem] = useState<LibraryItem | null>(null);
@@ -113,7 +155,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     if (!undoToast) return;
     const { recoveryId } = undoToast;
     setUndoToast(null);
-    const result = await undoRecoveryAction(recoveryId, userId, library, collectionsStore, activity);
+    const result = await undoRecoveryAction(recoveryId, userId, library, collectionsStore, activity, activitySummaryStore);
     setResultToast(result.message);
   }
 
@@ -122,91 +164,191 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   // lib/duplicate-detection.ts.
   const duplicateGroups = useMemo(() => findDuplicateGroups(items), [items]);
 
-  const collectionOptions = useMemo(() => getCollectionOptions(collections, items), [collections, items]);
+  const smartViewContext: SmartViewContext = useMemo(
+    () => ({ collections, activitySummary: activitySummaryStore.summary, now: new Date() }),
+    [collections, activitySummaryStore.summary],
+  );
 
+  // Faceted-style counts: each tab's own count reflects every OTHER active
+  // dimension's own count on exactly what came before it — reproduces the
+  // exact existing one-directional cascade (Collection > Type > Status:
+  // each level's OWN options are computed from every prior level, never
+  // from itself or a later one) rather than a fully-independent faceted
+  // count, which would be a behavior change from today's Library.
+  const rawCollectionScope = items; // Collection is the outermost facet — nothing scopes it.
+  const itemsForTypeCount = useMemo(
+    () => filterSmartViewItems(items, { ...currentDefinition, mediaTypes: [], statuses: [] }, smartViewContext),
+    [items, currentDefinition, smartViewContext],
+  );
+  const itemsForStatusCount = useMemo(
+    () => filterSmartViewItems(items, { ...currentDefinition, statuses: [] }, smartViewContext),
+    [items, currentDefinition, smartViewContext],
+  );
+
+  const collectionTabOptions = useMemo(
+    () => [
+      { id: ALL_FILTER, label: "All Items", count: rawCollectionScope.length },
+      ...collections.map((collection) => ({ id: collection.id, label: collection.name, count: getValidItemIds(collection, rawCollectionScope).length })),
+    ],
+    [collections, rawCollectionScope],
+  );
+  const activeCollectionTabId = currentDefinition.collections.length === 1 ? currentDefinition.collections[0] : ALL_FILTER;
   const activeCollection = useMemo(
-    () =>
-      activeCollectionId === ALL_FILTER
-        ? undefined
-        : collections.find((collection) => collection.id === activeCollectionId),
-    [collections, activeCollectionId],
+    () => (activeCollectionTabId === ALL_FILTER ? undefined : collections.find((collection) => collection.id === activeCollectionTabId)),
+    [collections, activeCollectionTabId],
   );
 
-  // undefined activeCollection with a non-ALL_FILTER id means the selected
-  // collection was just deleted elsewhere — treat that like "All Items"
-  // rather than showing a blank/broken view.
-  const collectionItemIds = useMemo(
-    () => (activeCollection ? new Set(getValidItemIds(activeCollection, items)) : undefined),
-    [activeCollection, items],
-  );
+  const typeOptions = useMemo(() => getItemTypeOptions(itemsForTypeCount), [itemsForTypeCount]);
+  const activeTypeTabId: TypeFilterValue = currentDefinition.mediaTypes.length === 1 ? currentDefinition.mediaTypes[0] : ALL_FILTER;
 
-  // Collection is the outermost scope: Type/Status/Category counts and
-  // options all drill down from whichever collection (or "All Items") is
-  // currently selected, exactly as Status/Category already drill down from
-  // Type.
-  const itemsForCollection = useMemo(
-    () => (collectionItemIds ? items.filter((item) => collectionItemIds.has(item.id)) : items),
-    [items, collectionItemIds],
-  );
+  const statusOptions = useMemo(() => getStatusOptions(itemsForStatusCount), [itemsForStatusCount]);
+  const activeStatusTabId: StatusFilterValue = currentDefinition.statuses.length === 1 ? currentDefinition.statuses[0] : ALL_FILTER;
 
-  const typeOptions = useMemo(() => getItemTypeOptions(itemsForCollection), [itemsForCollection]);
-
-  const itemsForType = useMemo(
-    () =>
-      activeType === ALL_FILTER
-        ? itemsForCollection
-        : itemsForCollection.filter((item) => item.type === activeType),
-    [itemsForCollection, activeType],
-  );
-
-  const statusOptions = useMemo(() => getStatusOptions(itemsForType), [itemsForType]);
-
-  const itemsForTypeAndStatus = useMemo(
-    () =>
-      activeStatus === ALL_FILTER
-        ? itemsForType
-        : itemsForType.filter((item) => "status" in item && item.status === activeStatus),
-    [itemsForType, activeStatus],
-  );
-
-  const uniqueCategories = useMemo(
-    () => getUniqueCategories(itemsForTypeAndStatus),
-    [itemsForTypeAndStatus],
-  );
-
-  // If the selected category no longer has any items in the current
-  // type/status scope (e.g. its last item was edited/deleted, or a filter
-  // changed), fall back to "All" instead of leaving the user stuck on a
-  // filter tab that vanished.
+  // Category is deliberately NOT part of SmartViewDefinition (Stage 31's
+  // documented schema has no such field) — it stays its own independent,
+  // unchanged ad-hoc dimension, composed as a final AND on top of
+  // whatever the engine produces, exactly as before.
+  const itemsBeforeCategory = useMemo(() => filterSmartViewItems(items, currentDefinition, smartViewContext), [items, currentDefinition, smartViewContext]);
+  const uniqueCategories = useMemo(() => getUniqueCategories(itemsBeforeCategory), [itemsBeforeCategory]);
   const activeCategory =
-    selectedCategory === ALL_FILTER ||
-    selectedCategory === FAVORITES_FILTER ||
-    uniqueCategories.includes(selectedCategory)
+    selectedCategory === ALL_FILTER || selectedCategory === FAVORITES_FILTER || uniqueCategories.includes(selectedCategory)
       ? selectedCategory
       : ALL_FILTER;
-
-  const categories = useMemo(() => getCategories(itemsForTypeAndStatus), [itemsForTypeAndStatus]);
+  const categories = useMemo(() => getCategories(itemsBeforeCategory), [itemsBeforeCategory]);
 
   const filteredItems = useMemo(
     () =>
-      filterLibraryItems(items, {
-        searchQuery,
-        activeType,
-        activeStatus,
-        activeCategory,
-        activeTag,
-        collectionItemIds,
+      itemsBeforeCategory.filter((item) => {
+        if (activeCategory === ALL_FILTER) return true;
+        if (activeCategory === FAVORITES_FILTER) return item.favorite;
+        return item.category === activeCategory;
       }),
-    [items, searchQuery, activeType, activeStatus, activeCategory, activeTag, collectionItemIds],
+    [itemsBeforeCategory, activeCategory],
   );
 
   const visibleItems = useMemo(
-    () => sortLibraryItems(filteredItems, sortOption),
-    [filteredItems, sortOption],
+    () => sortSmartViewItems(filteredItems, currentDefinition.sort, smartViewContext.activitySummary),
+    [filteredItems, currentDefinition.sort, smartViewContext.activitySummary],
   );
 
+  const isAdHocOrViewActive = selectedViewId !== null || !isDefaultSmartViewDefinition(currentDefinition);
+  const activeBuiltIn = selectedViewId ? findBuiltInSmartView(selectedViewId) : undefined;
+  const activeSavedView = selectedViewId && !activeBuiltIn ? smartViewsStore.views.find((view) => view.id === selectedViewId) : undefined;
+  const isModifiedFromSaved = activeSavedView ? !smartViewDefinitionsEqual(currentDefinition, activeSavedView.definition) : false;
+
+  const filterChips = useMemo(() => describeActiveFilters(currentDefinition), [currentDefinition]);
+  const activeTag = currentDefinition.tags.values[0] ?? null;
+
+  const builtInViewEntries = useMemo(
+    () => BUILT_IN_SMART_VIEWS.map((view) => ({ id: view.id, name: view.name, count: filterSmartViewItems(items, view.definition, smartViewContext).length })),
+    [items, smartViewContext],
+  );
+  const customViewEntries = useMemo(
+    () => smartViewsStore.views.map((view) => ({ id: view.id, name: view.name, count: filterSmartViewItems(items, view.definition, smartViewContext).length })),
+    [items, smartViewContext, smartViewsStore.views],
+  );
+
+  function handleSelectView(id: string | null) {
+    setSaveViewError(undefined);
+    setShowFiltersPanel(false);
+    if (id === null) {
+      setSelectedViewId(null);
+      setCurrentDefinition(defaultSmartViewDefinition());
+      return;
+    }
+    const builtIn = findBuiltInSmartView(id);
+    if (builtIn) {
+      setSelectedViewId(id);
+      setCurrentDefinition(builtIn.definition);
+      return;
+    }
+    const saved = smartViewsStore.views.find((view) => view.id === id);
+    if (saved) {
+      setSelectedViewId(id);
+      setCurrentDefinition(saved.definition);
+    }
+  }
+
+  function handleSetType(id: string) {
+    setCurrentDefinition((current) => ({ ...current, mediaTypes: id === ALL_FILTER ? [] : [id as SmartViewDefinition["mediaTypes"][number]] }));
+  }
+
+  function handleSetStatus(id: string) {
+    setCurrentDefinition((current) => ({ ...current, statuses: id === ALL_FILTER ? [] : [id as SmartViewDefinition["statuses"][number]] }));
+  }
+
+  function handleSetCollectionTab(id: string) {
+    setCurrentDefinition((current) => ({ ...current, collections: id === ALL_FILTER ? [] : [id] }));
+  }
+
   function handleTagClick(tag: string) {
-    setActiveTag((current) => (current?.toLowerCase() === tag.toLowerCase() ? null : tag));
+    setCurrentDefinition((current) => {
+      const already = current.tags.values.some((existing) => existing.toLowerCase() === tag.toLowerCase());
+      return { ...current, tags: { ...current.tags, values: already ? [] : [tag.toLowerCase()] } };
+    });
+  }
+
+  function handleRemoveChip(chipId: string) {
+    setCurrentDefinition((current) => removeFilterChip(current, chipId));
+  }
+
+  function handleClearAllFilters() {
+    handleSelectView(null);
+  }
+
+  function handleOpenSaveAsView() {
+    setSaveViewError(undefined);
+    setSaveViewDialogState({ mode: "create" });
+  }
+
+  function handleRequestRenameView(id: string) {
+    const view = smartViewsStore.views.find((candidate) => candidate.id === id);
+    if (!view) return;
+    setSaveViewError(undefined);
+    setSaveViewDialogState({ mode: "rename", targetId: id });
+  }
+
+  function handleRequestDeleteView(id: string) {
+    const view = smartViewsStore.views.find((candidate) => candidate.id === id);
+    if (view) setDeleteViewTarget(view);
+  }
+
+  function handleConfirmDeleteView() {
+    if (!deleteViewTarget) return;
+    const wasActive = selectedViewId === deleteViewTarget.id;
+    smartViewsStore.deleteView(deleteViewTarget.id);
+    setDeleteViewTarget(null);
+    // Stage 31 §69 — never leave a stale reference to a just-deleted view.
+    if (wasActive) handleSelectView(null);
+  }
+
+  async function handleSubmitSaveViewDialog(name: string) {
+    if (!saveViewDialogState) return;
+
+    if (saveViewDialogState.mode === "rename") {
+      const result = await smartViewsStore.updateView(saveViewDialogState.targetId, { name });
+      if (result.status === "ok") {
+        setSaveViewDialogState(null);
+        setSaveViewError(undefined);
+      } else {
+        setSaveViewError(describeSaveViewError(result));
+      }
+      return;
+    }
+
+    const result = await smartViewsStore.createView(name, currentDefinition);
+    if (result.status === "ok") {
+      setSaveViewDialogState(null);
+      setSaveViewError(undefined);
+      setSelectedViewId(result.view.id);
+    } else {
+      setSaveViewError(describeSaveViewError(result));
+    }
+  }
+
+  async function handleUpdateActiveView() {
+    if (!activeSavedView) return;
+    await smartViewsStore.updateView(activeSavedView.id, { definition: currentDefinition });
   }
 
   function handleOpenAddDialog() {
@@ -300,10 +442,6 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     }
   }
 
-  function handleSelectCollection(id: string) {
-    setActiveCollectionId(id);
-  }
-
   function handleOpenCreateCollection() {
     setCollectionDialogState({ mode: "create" });
   }
@@ -339,7 +477,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     if (!collectionDeleteTarget) return;
     const idToDelete = collectionDeleteTarget.id;
     collectionsStore.deleteCollection(idToDelete);
-    if (activeCollectionId === idToDelete) setActiveCollectionId(ALL_FILTER);
+    if (activeCollectionTabId === idToDelete) handleSetCollectionTab(ALL_FILTER);
     setCollectionDeleteTarget(null);
   }
 
@@ -349,7 +487,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
    * comment for the local-mode ordering hazard it exists to avoid.
    */
   async function handleMergeDuplicates(survivorId: string, duplicateId: string): Promise<{ ok: boolean; errorText?: string }> {
-    const result = await mergeItemsWithRecovery(survivorId, duplicateId, userId, library, collectionsStore, activity);
+    const result = await mergeItemsWithRecovery(survivorId, duplicateId, userId, library, collectionsStore, activity, activitySummaryStore);
     if (result.ok && result.handle) {
       setUndoToast({ recoveryId: result.handle.recoveryId, message: describeRecoveryAction(result.handle.actionType, result.handle.title) });
     }
@@ -374,12 +512,14 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     collectionsStore.createCollection({ name }, membershipItem.id);
   }
 
+  const activeViewName = activeBuiltIn?.name ?? activeSavedView?.name;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header
         active="library"
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
+        searchQuery={currentDefinition.query}
+        onSearchQueryChange={(value) => setCurrentDefinition((current) => ({ ...current, query: value }))}
         onAddItem={handleOpenAddDialog}
       />
 
@@ -394,22 +534,27 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
           <DataLoadingPlaceholder label="Loading your library…" />
         ) : (
           <>
-            <div>
+            <SmartViewsBar
+              builtInViews={builtInViewEntries}
+              customViews={customViewEntries}
+              allLibraryCount={items.length}
+              activeViewId={selectedViewId}
+              onSelect={handleSelectView}
+              onRenameRequest={handleRequestRenameView}
+              onDeleteRequest={handleRequestDeleteView}
+            />
+
+            <div className="mt-4">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
                 Collection
               </p>
-              <CollectionFilterBar
-                options={collectionOptions}
-                activeId={activeCollectionId}
-                onChange={handleSelectCollection}
-                onCreateCollection={handleOpenCreateCollection}
-              />
+              <CollectionFilterBar options={collectionTabOptions} activeId={activeCollectionTabId} onChange={handleSetCollectionTab} onCreateCollection={handleOpenCreateCollection} />
             </div>
 
             {activeCollection && (
               <CollectionHeader
                 collection={activeCollection}
-                itemCount={collectionItemIds?.size ?? 0}
+                itemCount={getValidItemIds(activeCollection, rawCollectionScope).length}
                 onEdit={() => handleOpenEditCollection(activeCollection)}
                 onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
               />
@@ -419,43 +564,21 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
                 Type
               </p>
-              <FilterTabs
-                options={typeOptions}
-                activeId={activeType}
-                // FilterTabs is a generic string-id tab list (shared with the
-                // Category row below); typeOptions is built by getItemTypeOptions
-                // from ALL_FILTER + SUPPORTED_ITEM_TYPES, so every id it can ever
-                // pass back here is already a valid TypeFilterValue.
-                onChange={(id) => setActiveType(id as TypeFilterValue)}
-                ariaLabel="Filter library by type"
-              />
+              <FilterTabs options={typeOptions} activeId={activeTypeTabId} onChange={handleSetType} ariaLabel="Filter library by type" />
             </div>
 
             <div className="mt-4">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
                 Status
               </p>
-              <FilterTabs
-                options={statusOptions}
-                activeId={activeStatus}
-                // Built entirely from ALL_FILTER + TRACKING_STATUSES in
-                // getStatusOptions, so every id it can pass back is a valid
-                // StatusFilterValue.
-                onChange={(id) => setActiveStatus(id as StatusFilterValue)}
-                ariaLabel="Filter library by status"
-              />
+              <FilterTabs options={statusOptions} activeId={activeStatusTabId} onChange={handleSetStatus} ariaLabel="Filter library by status" />
             </div>
 
             <div className="mt-4">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
                 Category
               </p>
-              <FilterTabs
-                options={categories}
-                activeId={activeCategory}
-                onChange={setSelectedCategory}
-                ariaLabel="Filter library by category"
-              />
+              <FilterTabs options={categories} activeId={activeCategory} onChange={setSelectedCategory} ariaLabel="Filter library by category" />
             </div>
 
             {duplicateGroups.length > 0 && (
@@ -483,40 +606,92 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
             )}
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              {activeTag && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTag(null)}
-                  className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-foreground/40"
-                >
-                  Tag: {activeTag}
-                  <XIcon width={13} height={13} />
+              <button
+                type="button"
+                onClick={() => setShowFiltersPanel((current) => !current)}
+                aria-expanded={showFiltersPanel}
+                className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
+              >
+                <SlidersIcon width={14} height={14} />
+                Filters
+              </button>
+
+              {isAdHocOrViewActive && !activeSavedView && (
+                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
+                  Save as Smart View
                 </button>
               )}
+              {activeSavedView && !isModifiedFromSaved && (
+                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
+                  Save as new view
+                </button>
+              )}
+
               <div className="ml-auto">
-                <SortSelect value={sortOption} onChange={setSortOption} />
+                <LibrarySortSelect value={currentDefinition.sort} onChange={(sort) => setCurrentDefinition((current) => ({ ...current, sort }))} />
               </div>
             </div>
 
+            {showFiltersPanel && (
+              <div className="mt-3">
+                <LibraryFiltersPanel definition={currentDefinition} collections={collections} onChange={setCurrentDefinition} />
+              </div>
+            )}
+
+            <div className="mt-3">
+              <FilterChips chips={filterChips} onRemove={handleRemoveChip} onClearAll={handleClearAllFilters} />
+            </div>
+
+            {activeSavedView && isModifiedFromSaved && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-hover px-3 py-2">
+                <p className="text-sm text-foreground">View modified</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenSaveAsView}
+                    className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface"
+                  >
+                    Save as new
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleUpdateActiveView}
+                    className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:bg-foreground/85"
+                  >
+                    Update view
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4">
-              <LibraryItemGrid
-                items={visibleItems}
-                totalItems={items.length}
-                searchQuery={searchQuery}
-                activeType={activeType}
-                activeStatus={activeStatus}
-                activeCategory={activeCategory}
-                activeTag={activeTag}
-                collectionSize={collectionItemIds?.size}
-                onToggleFavorite={library.toggleFavorite}
-                onEdit={handleOpenEditDialog}
-                onAddToCollection={handleOpenMembershipDialog}
-                onDeleteRequest={handleDeleteRequest}
-                onClearSearch={() => setSearchQuery("")}
-                onClearTag={() => setActiveTag(null)}
-                onTagClick={handleTagClick}
-                onQuickIncrement={library.quickIncrementProgress}
-              />
+              {visibleItems.length === 0 && isAdHocOrViewActive ? (
+                <EmptyState
+                  icon={<SearchIcon width={22} height={22} />}
+                  title={activeViewName ? `Nothing matches "${activeViewName}" yet` : "No items match this view."}
+                  description="Try adjusting the filters."
+                  action={{ label: "Clear filters", onClick: handleClearAllFilters }}
+                />
+              ) : (
+                <LibraryItemGrid
+                  items={visibleItems}
+                  totalItems={items.length}
+                  searchQuery={currentDefinition.query}
+                  activeType={activeTypeTabId}
+                  activeStatus={activeStatusTabId}
+                  activeCategory={activeCategory}
+                  activeTag={activeTag}
+                  collectionSize={activeCollection ? getValidItemIds(activeCollection, rawCollectionScope).length : undefined}
+                  onToggleFavorite={library.toggleFavorite}
+                  onEdit={handleOpenEditDialog}
+                  onAddToCollection={handleOpenMembershipDialog}
+                  onDeleteRequest={handleDeleteRequest}
+                  onClearSearch={() => setCurrentDefinition((current) => ({ ...current, query: "" }))}
+                  onClearTag={() => setCurrentDefinition((current) => ({ ...current, tags: { ...current.tags, values: [] } }))}
+                  onTagClick={handleTagClick}
+                  onQuickIncrement={library.quickIncrementProgress}
+                />
+              )}
             </div>
           </>
         )}
@@ -576,6 +751,20 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
           onClose={() => setReviewGroup(null)}
         />
       )}
+
+      <SaveSmartViewDialog
+        mode={saveViewDialogState?.mode ?? "create"}
+        isOpen={saveViewDialogState !== null}
+        initialName={saveViewDialogState?.mode === "rename" ? smartViewsStore.views.find((view) => view.id === saveViewDialogState.targetId)?.name : undefined}
+        externalError={saveViewError}
+        onSubmit={handleSubmitSaveViewDialog}
+        onClose={() => {
+          setSaveViewDialogState(null);
+          setSaveViewError(undefined);
+        }}
+      />
+
+      <DeleteSmartViewDialog view={deleteViewTarget} onCancel={() => setDeleteViewTarget(null)} onConfirm={handleConfirmDeleteView} />
 
       {undoToast && <UndoToast message={undoToast.message} onUndo={handleUndoClick} onDismiss={() => setUndoToast(null)} />}
       {!undoToast && resultToast && <UndoToast message={resultToast} onDismiss={() => setResultToast(null)} />}

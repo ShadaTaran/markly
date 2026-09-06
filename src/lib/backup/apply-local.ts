@@ -36,6 +36,8 @@ export interface LocalImportResult {
   activityImportedCount: number;
   /** How many of `plan.activityToImport` were dropped purely for capacity — never for validity. */
   activitySkippedForCapacity: number;
+  /** Stage 31 fix — every newly-imported event, BEFORE the capacity trim reflected in `events`/`activitySkippedForCapacity`. Feed this (not `events`) into the compact activity summary so a trimmed-away item's last-activity isn't lost. */
+  newEvents: ActivityEvent[];
 }
 
 /**
@@ -276,5 +278,11 @@ export function applyImportPlanLocally(
     events: retained.events,
     activityImportedCount: retained.importedCount,
     activitySkippedForCapacity: retained.skippedForCapacity,
+    // Stage 31 fix — the FULL newly-imported event set, before the
+    // detailed-log capacity trim above. The compact activity summary
+    // (hooks/useActivitySummary.ts) must be able to know an item's
+    // last-activity even when its only imported qualifying event doesn't
+    // survive that trim, so the caller merges THIS (not `events`) into it.
+    newEvents,
   };
 }

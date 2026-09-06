@@ -60,9 +60,27 @@ export interface ActivityEventRow {
   created_at: string;
 }
 
+/** Stage 31 — one row per saved Smart View (a query definition, never an item-id list — see src/types/smart-view.ts). */
+export interface SavedLibraryViewRow {
+  id: string;
+  user_id: string;
+  name: string;
+  definition_version: number;
+  definition: Record<string, unknown>;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** Stage 31 — one row per LibraryItem with at least one qualifying activity event; see the get_library_activity_summary() RPC in 0015_stage31_saved_library_views.sql. */
+export interface ActivitySummaryRow {
+  item_id: string;
+  last_activity_at: string;
+}
+
 type InsertOf<Row, Required extends keyof Row> = Partial<Row> & Pick<Row, Required>;
 
 export type LibraryItemInsert = InsertOf<LibraryItemRow, "id" | "user_id" | "type" | "title">;
 export type CollectionInsert = InsertOf<CollectionRow, "id" | "user_id" | "name">;
 export type CollectionItemInsert = InsertOf<CollectionItemRow, "collection_id" | "item_id" | "user_id">;
 export type ActivityEventInsert = InsertOf<ActivityEventRow, "id" | "user_id" | "item_id" | "type">;
+export type SavedLibraryViewInsert = InsertOf<SavedLibraryViewRow, "id" | "user_id" | "name" | "definition_version" | "definition">;

@@ -5,6 +5,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
+import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchRecoveryActions, type RecoveryActionSummary } from "@/lib/cloud/recovery";
 import { loadRecoveryActions } from "@/lib/local-recovery-storage";
@@ -25,6 +26,7 @@ export function RecentRecoveryPanel() {
   const activity = useActivity(userId);
   const library = useLibraryItems([], activity.logEvent, userId);
   const collectionsStore = useCollections(library.items, library.isHydrated, userId);
+  const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
 
   const [actions, setActions] = useState<RecoveryActionSummary[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -67,7 +69,7 @@ export function RecentRecoveryPanel() {
   async function handleUndo(id: string) {
     setFeedback(null);
     setPendingId(id);
-    const result = await undoRecoveryAction(id, userId, library, collectionsStore, activity);
+    const result = await undoRecoveryAction(id, userId, library, collectionsStore, activity, activitySummaryStore);
     setPendingId(null);
     setFeedback(result.message);
     load();

@@ -83,7 +83,8 @@ interface FilterOptions {
  * a targeted `in` check, so adding a new searchable field to a future type
  * doesn't require touching every other branch.
  */
-function getSearchableText(item: LibraryItem): string {
+/** Exported for lib/smart-views.ts's query matching — the Smart View engine must search the exact same fields as the existing Library search, never a silently narrower set (Stage 31). */
+export function getSearchableText(item: LibraryItem): string {
   const parts: string[] = [item.title, item.description, item.category, ...item.tags];
 
   if (item.type === "website") {

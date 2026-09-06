@@ -18,6 +18,16 @@ export function useActivity(userId?: string | null) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped only once a cloud write (insert/delete) is CONFIRMED durable by
+  // Supabase — never on the optimistic `setEvents` above, which runs before
+  // the network round-trip resolves. useActivitySummary's cloud-mode
+  // refresh keys off this instead of `events` itself: reacting to the
+  // optimistic array would race the still-in-flight write and could
+  // re-fetch the activity-summary RPC before the row it needs is even
+  // there yet (a correctness-review finding — verified live: a naive
+  // "refetch whenever events changes" version could return a stale
+  // aggregate immediately after logging progress).
+  const [cloudWriteVersion, setCloudWriteVersion] = useState(0);
 
   // Guards against a slow, now-stale hydration request (e.g. from just
   // before a sign-out) resolving after a newer one and clobbering it —
@@ -98,12 +108,14 @@ export function useActivity(userId?: string | null) {
     if (userId) {
       const supabase = getSupabaseClient();
       if (supabase) {
-        insertActivityEvent(supabase, event, userId).catch(() => {
-          setError("Unable to save this update.");
-          // Activity is append-only, so rolling back just means dropping
-          // the one optimistic event that failed to persist.
-          setEvents((current) => current.filter((existing) => existing.id !== event.id));
-        });
+        insertActivityEvent(supabase, event, userId)
+          .then(() => setCloudWriteVersion((v) => v + 1))
+          .catch(() => {
+            setError("Unable to save this update.");
+            // Activity is append-only, so rolling back just means dropping
+            // the one optimistic event that failed to persist.
+            setEvents((current) => current.filter((existing) => existing.id !== event.id));
+          });
       }
     }
   }
@@ -114,7 +126,9 @@ export function useActivity(userId?: string | null) {
     if (userId) {
       const supabase = getSupabaseClient();
       if (supabase) {
-        deleteActivityEventsForItem(supabase, itemId).catch(() => setError("Unable to save this update."));
+        deleteActivityEventsForItem(supabase, itemId)
+          .then(() => setCloudWriteVersion((v) => v + 1))
+          .catch(() => setError("Unable to save this update."));
       }
     }
   }
@@ -190,6 +204,7 @@ export function useActivity(userId?: string | null) {
     events,
     isHydrated,
     error,
+    cloudWriteVersion,
     logEvent,
     removeEventsForItem,
     getEventsForItem,

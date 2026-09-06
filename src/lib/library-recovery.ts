@@ -41,6 +41,24 @@ export interface MergeRecoveryPayload {
   movedActivityIds: string[];
   /** The survivor's own Activity event ids at merge time — these never move, but Undo needs them to compute the exact expected post-merge activity set for the survivor (mirrors survivorPreMergeCollectionIds/duplicatePreMergeCollectionIds's role for collections). */
   survivorPreMergeActivityIds: string[];
+  /**
+   * Stage 31 correctness fix — the two items' durable compact-activity-
+   * summary values (see lib/smart-views.ts's ActivitySummary) at the
+   * moment of merge, captured directly rather than left to be recomputed
+   * from the detailed Activity log on Undo. That log is capped at 500
+   * events; by the time Undo runs (up to 15 minutes later), a burst of
+   * unrelated activity or a backup import could have trimmed away the very
+   * event either value originally came from, making a recompute silently
+   * wrong. `null` means the item had no qualifying activity at merge time.
+   * Optional so a merge-recovery record persisted before this field
+   * existed (only possible from local dev/testing prior to this fix, since
+   * Stage 31 has never shipped) doesn't fail to parse — its absence falls
+   * back to the old best-effort recompute (see undoRecoveryAction).
+   */
+  activitySummaryBefore?: {
+    survivor: string | null;
+    duplicate: string | null;
+  };
 }
 
 export interface RecoveryEntry {

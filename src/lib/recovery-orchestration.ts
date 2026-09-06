@@ -3,6 +3,7 @@
 import type { useActivity } from "@/hooks/useActivity";
 import type { useCollections } from "@/hooks/useCollections";
 import type { useLibraryItems } from "@/hooks/useLibraryItems";
+import type { useActivitySummary } from "@/hooks/useActivitySummary";
 import type { LibraryItem } from "@/types/library-item";
 import { isMediaItem } from "@/lib/item-detail";
 import { getSupabaseClient } from "@/lib/supabase/client";
@@ -31,6 +32,7 @@ import {
 type Library = ReturnType<typeof useLibraryItems>;
 type CollectionsStore = ReturnType<typeof useCollections>;
 type Activity = ReturnType<typeof useActivity>;
+type ActivitySummaryStore = ReturnType<typeof useActivitySummary>;
 
 export interface RecoveryHandle {
   recoveryId: string;
@@ -117,6 +119,7 @@ export async function mergeItemsWithRecovery(
   library: Library,
   collectionsStore: CollectionsStore,
   activity: Activity,
+  activitySummaryStore: ActivitySummaryStore,
 ): Promise<MergeWithRecoveryResult> {
   const survivor = library.items.find((candidate) => candidate.id === survivorId);
   const duplicate = library.items.find((candidate) => candidate.id === duplicateId);
@@ -134,6 +137,15 @@ export async function mergeItemsWithRecovery(
     const duplicateCollectionIds = collectionsStore.collections.filter((c) => c.itemIds.includes(duplicateId)).map((c) => c.id);
     const movedActivityIds = activity.events.filter((event) => event.itemId === duplicateId).map((event) => event.id);
     const survivorPreMergeActivityIds = activity.events.filter((event) => event.itemId === survivorId).map((event) => event.id);
+    // Captured BEFORE mergeInto runs below, from the durable summary
+    // itself — the only way to later restore these two exact values on
+    // Undo without depending on the detailed Activity log still holding
+    // their originating events (Stage 31 correctness fix — see
+    // MergeRecoveryPayload.activitySummaryBefore's doc comment).
+    const activitySummaryBefore = {
+      survivor: activitySummaryStore.summary.get(survivorId) ?? null,
+      duplicate: activitySummaryStore.summary.get(duplicateId) ?? null,
+    };
     recoveryId = generateId();
     const now = Date.now();
     const payload: MergeRecoveryPayload = {
@@ -146,6 +158,7 @@ export async function mergeItemsWithRecovery(
       duplicatePreMergeCollectionIds: duplicateCollectionIds,
       movedActivityIds,
       survivorPreMergeActivityIds,
+      activitySummaryBefore,
     };
     addRecoveryAction({
       id: recoveryId,
@@ -158,6 +171,12 @@ export async function mergeItemsWithRecovery(
 
     collectionsStore.mergeItemReferences(survivorId, duplicateId);
     activity.reassignEventsForItem(duplicateId, survivorId);
+    // Stage 31 fix — survivor's compact activity summary becomes
+    // max(survivor, duplicate), using the PERSISTED summary values (never
+    // re-derived from `activity.events`), so this is correct even if
+    // either item's original qualifying event has already aged out of
+    // the 500-event detailed log.
+    activitySummaryStore.mergeInto(duplicateId, survivorId);
   }
 
   const result = await library.mergeItems(survivorId, duplicateId);
@@ -173,6 +192,14 @@ export async function mergeItemsWithRecovery(
 
   if (userId) {
     await Promise.all([collectionsStore.reload(), activity.reload()]);
+    // Stage 31 fix — merge_library_items reassigns activity_events
+    // server-side, so the RPC aggregate is already correct; it just needs
+    // an explicit re-fetch here, exactly as local mode explicitly calls
+    // mergeInto above, since nothing else would otherwise trigger one
+    // (activity.reload() replaces useActivity's own `events` state, which
+    // this hook no longer keys its cloud refresh off, to avoid a similar
+    // race with fetchActivityEvents).
+    activitySummaryStore.reload();
     return {
       ok: true,
       handle: result.recoveryId ? { recoveryId: result.recoveryId, actionType: "merge_items", title: result.merged.title } : undefined,
@@ -213,6 +240,7 @@ export async function undoRecoveryAction(
   library: Library,
   collectionsStore: CollectionsStore,
   activity: Activity,
+  activitySummaryStore: ActivitySummaryStore,
 ): Promise<UndoResult> {
   if (userId) {
     const supabase = getSupabaseClient();
@@ -221,6 +249,13 @@ export async function undoRecoveryAction(
       const result = await undoLibraryRecovery(supabase, recoveryId);
       if (result.status === "recovered") {
         await Promise.all([library.reload(), collectionsStore.reload(), activity.reload()]);
+        // Stage 31 fix — undo_library_recovery restores activity_events'
+        // topology (delete-undo: re-inserts the item's own rows;
+        // merge-undo: moves the duplicate's rows back) server-side inside
+        // the same transaction, so the RPC aggregate already reflects it;
+        // this just needs an explicit re-fetch, same reasoning as the
+        // merge branch above.
+        activitySummaryStore.reload();
         return { ok: true, message: "Undone." };
       }
       if (result.status === "expired") return { ok: false, message: "The undo period for that action has expired." };
@@ -258,6 +293,33 @@ export async function undoRecoveryAction(
     payload.duplicatePreMergeCollectionIds,
   );
   activity.restoreEventsForMerge(payload.movedActivityIds, payload.survivorId, payload.duplicateId);
+  if (payload.activitySummaryBefore) {
+    // Stage 31 fix — restore the exact pre-merge values captured in the
+    // recovery snapshot at merge time. A plain mergeInto-style max() can
+    // only ever advance a timestamp, so it could never walk the
+    // survivor's summary back down from the max(survivor, duplicate) the
+    // merge produced — and recomputing from the CURRENT detailed Activity
+    // log (the previous approach) isn't sound either, since that log may
+    // have trimmed away the very event either value came from by the time
+    // Undo runs. Restoring the snapshot directly is immune to that.
+    activitySummaryStore.restoreForMerge(
+      payload.survivorId,
+      payload.duplicateId,
+      payload.activitySummaryBefore.survivor,
+      payload.activitySummaryBefore.duplicate,
+    );
+  } else {
+    // Fallback for a merge-recovery record persisted before
+    // activitySummaryBefore existed (only reachable from local dev/
+    // testing prior to this fix — Stage 31 has never shipped). Best
+    // effort, not provably correct in general — see
+    // recomputeSummaryForItems's doc comment.
+    const movedEventIds = new Set(payload.movedActivityIds);
+    const postUndoEvents = activity.events.map((event) =>
+      movedEventIds.has(event.id) && event.itemId === payload.survivorId ? { ...event, itemId: payload.duplicateId } : event,
+    );
+    activitySummaryStore.recomputeForItems([payload.survivorId, payload.duplicateId], postUndoEvents);
+  }
   removeRecoveryAction(recoveryId);
   return { ok: true, message: "Undone." };
 }

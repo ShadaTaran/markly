@@ -5,6 +5,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
+import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { DataErrorBanner } from "@/components/DataStatus";
 import { buildAndValidateBackup } from "@/lib/backup/export";
@@ -75,6 +76,7 @@ export function BackupSettingsPanel() {
   const activity = useActivity(userId);
   const library = useLibraryItems([], activity.logEvent, userId);
   const collectionsStore = useCollections(library.items, library.isHydrated, userId);
+  const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -181,6 +183,11 @@ export function BackupSettingsPanel() {
       collectionsStore.replaceAllLocal(applied.collections);
       activity.replaceAllLocal(applied.events);
       library.replaceAllLocal(applied.items);
+      // Stage 31 fix — merges the FULL imported event set (not the
+      // capacity-trimmed `applied.events`) into the durable activity
+      // summary, so a Smart View's last-activity for an imported item
+      // survives even if its only qualifying event doesn't make the cut.
+      activitySummaryStore.mergeEvents(applied.newEvents);
       setImportState({
         step: "done",
         itemsCreated: plan.counts.itemsNew + plan.counts.itemsPossibleDuplicateIncluded,
