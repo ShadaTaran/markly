@@ -11,6 +11,8 @@ import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useActivity } from "@/hooks/useActivity";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { useTrackingSources } from "@/hooks/useTrackingSources";
+import { useReleaseCalendar } from "@/hooks/useReleaseCalendar";
+import type { ReleaseEvent } from "@/types/release-event";
 import { getActivityDetail, getActivitySourceLabel, formatRelativeTime } from "@/lib/activity-format";
 import { getCurrentlyTrackingCounts, getLibraryTypeCounts } from "@/lib/stats";
 import { isMediaItem, getItemHref } from "@/lib/item-detail";
@@ -21,6 +23,7 @@ import {
   resolveResumeTarget,
   countActiveWithinDays,
 } from "@/lib/dashboard";
+import { DEFAULT_CALENDAR_RANGE_DAYS, formatReleaseDayLabel, formatReleaseEventTime, getLocalDayKey, getLocalTimeZone } from "@/lib/release-calendar";
 import { CONTINUE_VIEW_ID, RECENTLY_ACTIVE_VIEW_ID, STALLED_VIEW_ID, type SmartViewContext } from "@/lib/smart-views";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 import { ExternalLinkIcon, StarIcon } from "@/components/icons";
@@ -43,6 +46,8 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
   const { items } = library;
   const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
   const trackingSources = useTrackingSources(userId);
+  const calendar = useReleaseCalendar(items, DEFAULT_CALENDAR_RANGE_DAYS);
+  const timeZone = useMemo(() => getLocalTimeZone(), []);
 
   // Mirrors LibraryView's own gating: cloud mode is a real network round
   // trip for both stores, so a loading state is shown until the library
@@ -119,6 +124,16 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
               now={smartViewContext.now}
               activityError={activitySummaryStore.error}
               onRetryActivity={() => activitySummaryStore.reload()}
+            />
+
+            <UpcomingSection
+              events={calendar.events}
+              itemsById={itemsById}
+              timeZone={timeZone}
+              isLoading={calendar.isLoading}
+              error={calendar.error}
+              isPartial={calendar.isPartial}
+              onRetry={calendar.reload}
             />
 
             <RecentlyActiveSection
@@ -350,6 +365,81 @@ function ContinueCard({
         </p>
       )}
     </article>
+  );
+}
+
+// ============================================================
+// Upcoming (Stage 33) — a small preview of the same public, unauthenticated
+// AniList schedule data /calendar shows in full. A failed/loading fetch
+// here never touches loadError/loading above — Continue, Recently Active,
+// Stalled, and Library Snapshot all render normally regardless (§41).
+// ============================================================
+
+const DASHBOARD_UPCOMING_LIMIT = 5;
+
+function UpcomingSection({
+  events,
+  itemsById,
+  timeZone,
+  isLoading,
+  error,
+  isPartial,
+  onRetry,
+}: {
+  events: ReleaseEvent[];
+  itemsById: Map<string, LibraryItem>;
+  timeZone: string;
+  isLoading: boolean;
+  error: { message: string } | null;
+  isPartial: boolean;
+  onRetry: () => void;
+}) {
+  const upcoming = events.slice(0, DASHBOARD_UPCOMING_LIMIT);
+
+  return (
+    <section>
+      <SectionHeading title="Upcoming" viewAllHref="/calendar" />
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading upcoming episodes…</p>
+      ) : error ? (
+        <p className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>{error.message}</span>
+          <button type="button" onClick={onRetry} className="font-medium text-foreground hover:underline">
+            Try again
+          </button>
+        </p>
+      ) : upcoming.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing upcoming yet.</p>
+      ) : (
+        <>
+          {/* isPartial: a correctness-review invariant — never let a fetch that stopped early (pagination/budget cap) read as a complete calendar; see fetchAniListAiringSchedules's own doc comment. The full /calendar page is where a user can act on this (narrow the range); Dashboard's compact preview just discloses it. */}
+          {isPartial && <p className="mb-1.5 text-[11px] text-muted-foreground/80">Showing partial results — see Calendar for details.</p>}
+          <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
+          {upcoming.map((event) => {
+            const item = itemsById.get(event.libraryItemId);
+            const title = event.title ?? item?.title ?? "Untitled";
+            const dayKey = getLocalDayKey(new Date(event.startsAt), timeZone);
+            return (
+              <li key={event.id}>
+                <Link
+                  href={item ? getItemHref(item) : "/calendar"}
+                  className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-surface-hover"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{title}</p>
+                    <p className="truncate text-xs text-muted-foreground">Episode {event.episode}</p>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatReleaseDayLabel(dayKey, timeZone, new Date())} · {formatReleaseEventTime(event.startsAt, timeZone)}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }
 

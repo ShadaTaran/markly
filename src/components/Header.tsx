@@ -6,7 +6,7 @@ import { PlusIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 interface HeaderProps {
-  active: "dashboard" | "library";
+  active: "dashboard" | "library" | "calendar";
   /** Only the Library view searches/adds items — omit these to get a bare header. */
   searchQuery?: string;
   onSearchQueryChange?: (value: string) => void;
@@ -16,6 +16,7 @@ interface HeaderProps {
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", href: "/" },
   { id: "library", label: "Library", href: "/library" },
+  { id: "calendar", label: "Calendar", href: "/calendar" },
 ] as const;
 
 export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: HeaderProps) {
