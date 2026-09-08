@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ConnectionSummary } from "@/lib/integrations/types";
 import { AniListReconcilePanel } from "@/components/AniListReconcilePanel";
+import { Button } from "@/components/Button";
+import { Switch } from "@/components/Switch";
 
 interface ConnectionsPanelProps {
   initialSummary: ConnectionSummary;
@@ -156,7 +158,7 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError, 
     <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">AniList</h2>
+          <h2 className="text-base font-semibold text-foreground">AniList</h2>
           {!summary.connected && <p className="mt-1 text-sm text-muted-foreground">Sync your Anime and Manga library with Markly.</p>}
           {summary.connected && summary.reconnectRequired && <p className="mt-1 text-sm text-danger">Reconnect required</p>}
           {summary.connected && !summary.reconnectRequired && (
@@ -191,23 +193,13 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError, 
 
         {summary.connected && !summary.reconnectRequired && !isFirstImport && (
           <>
-            <button
-              type="button"
-              onClick={() => setShowReconcile(true)}
-              disabled={busy !== null}
-              className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-            >
+            <Button variant="primary" onClick={() => setShowReconcile(true)} disabled={busy !== null}>
               Sync Now
-            </button>
+            </Button>
             {!disconnectConfirm ? (
-              <button
-                type="button"
-                onClick={() => setDisconnectConfirm(true)}
-                disabled={busy !== null}
-                className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
-              >
+              <Button variant="ghost" onClick={() => setDisconnectConfirm(true)} disabled={busy !== null}>
                 Disconnect
-              </button>
+              </Button>
             ) : (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Disconnect AniList? Imported items stay in Markly.</span>
@@ -215,7 +207,7 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError, 
                   type="button"
                   onClick={disconnect}
                   disabled={busy !== null}
-                  className="rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
+                  className="min-w-24 rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
                 >
                   {busy === "disconnect" ? "Disconnecting…" : "Confirm"}
                 </button>
@@ -232,34 +224,29 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError, 
         )}
 
         {summary.connected && !summary.reconnectRequired && isFirstImport && !preview && (
-          <button
-            type="button"
-            onClick={runPreview}
-            disabled={busy !== null}
-            className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-          >
+          <Button variant="primary" onClick={runPreview} disabled={busy !== null} className="min-w-36">
             {busy === "preview" ? "Loading…" : "Preview Library"}
-          </button>
+          </Button>
         )}
       </div>
 
       {summary.connected && !summary.reconnectRequired && !isFirstImport && (
-        <div className="mt-4 border-t border-border pt-3">
-          <label className="flex items-start gap-2.5 text-sm text-foreground">
-            <input
-              type="checkbox"
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Write Access</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-foreground">Allow Markly to update AniList</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                A reviewed Sync Now can send progress, status, and rating changes. Markly never sends anything on its own.
+              </p>
+            </div>
+            <Switch
               checked={allowWrites}
               disabled={busy !== null}
-              onChange={(event) => handleWritesToggle(event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-border"
+              onChange={handleWritesToggle}
+              aria-label="Allow Markly to update AniList"
             />
-            <span>
-              Allow Markly to update AniList
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                Lets a reviewed Sync Now send progress, status, and rating changes to your AniList list. Markly never sends anything on its own.
-              </span>
-            </span>
-          </label>
+          </div>
 
           {showEnableWritesConfirm && (
             <div className="mt-2 rounded-md border border-border bg-surface-hover p-3">
@@ -315,14 +302,14 @@ export function ConnectionsPanel({ initialSummary, justConnected, connectError, 
               Manga ({preview.manga})
             </label>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="primary"
             onClick={runImport}
             disabled={busy !== null || (!selection.anime && !selection.manga)}
-            className="mt-3 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
+            className="mt-3 min-w-28"
           >
             {busy === "import" ? "Importing…" : "Continue"}
-          </button>
+          </Button>
         </div>
       )}
 

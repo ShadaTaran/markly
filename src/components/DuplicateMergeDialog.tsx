@@ -9,6 +9,7 @@ import { computeMergedLibraryItem, MERGE_BLOCK_REASON_LABELS } from "@/lib/libra
 import { getProgressInfo, getStatusLabel } from "@/lib/tracking";
 import { formatDate, getProviderLabel } from "@/lib/item-detail";
 import { Dialog } from "@/components/Dialog";
+import { Button } from "@/components/Button";
 import { CheckIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
@@ -135,21 +136,12 @@ export function DuplicateMergeDialog({ group, collections, onMerge, onClose }: D
       {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="secondary" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleMerge}
-          disabled={busy || computation.status === "blocked"}
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-        >
+        </Button>
+        <Button variant="primary" onClick={handleMerge} disabled={busy || computation.status === "blocked"} className="min-w-28">
           {busy ? "Merging…" : "Merge Items"}
-        </button>
+        </Button>
       </div>
     </Dialog>
   );

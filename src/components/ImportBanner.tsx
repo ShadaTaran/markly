@@ -3,11 +3,17 @@
 import { useEffect } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { useLocalImport } from "@/hooks/useLocalImport";
+import { IconButton } from "@/components/IconButton";
+import { XIcon } from "@/components/icons";
 
 /**
- * Mounted once, globally (see layout.tsx), so it appears regardless of
- * which page a newly-signed-in user lands on. Renders nothing until
- * there's unimported local data for the signed-in user to offer.
+ * Rendered by each top-level page, directly under its own Header — a
+ * one-time, per-device nudge, not permanent app chrome, so it must never
+ * outrank navigation. "Not now" persists (see useLocalImport), so it does
+ * not resurface it on every visit; the underlying local data and the
+ * ability to import it later from Settings > Data & Backup are unaffected
+ * either way (Stage 16 import safety is untouched here — this only
+ * changes whether this notice is shown).
  */
 export function ImportBanner() {
   const { user } = useAuth();
@@ -29,8 +35,8 @@ export function ImportBanner() {
 
   if (status === "done") {
     return (
-      <div className="border-b border-border bg-surface">
-        <div className="mx-auto max-w-6xl px-4 py-2.5 text-sm text-foreground sm:px-6 lg:px-8">
+      <div className="border-b border-border bg-muted">
+        <div className="mx-auto max-w-6xl px-4 py-1.5 text-xs text-muted-foreground sm:px-6 lg:px-8">
           Imported {itemLabel} into your account.
         </div>
       </div>
@@ -38,31 +44,27 @@ export function ImportBanner() {
   }
 
   return (
-    <div className="border-b border-border bg-surface">
-      <div className="mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-sm sm:px-6 lg:px-8">
-        <p className="text-foreground">
-          We found {itemLabel} stored on this device. Import them into your Markly account so they can sync across
-          devices?
-        </p>
-        <div className="flex shrink-0 items-center gap-3">
-          {error && <span className="text-xs text-red-500">{error}</span>}
-          <button
-            type="button"
-            onClick={dismiss}
-            disabled={status === "importing"}
-            className="rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
-          >
-            Not now
-          </button>
-          <button
-            type="button"
-            onClick={runImport}
-            disabled={status === "importing"}
-            className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-          >
-            {status === "importing" ? "Importing…" : `Import ${itemLabel}`}
-          </button>
-        </div>
+    <div className="border-b border-border bg-muted">
+      <div className="mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs sm:px-6 lg:px-8">
+        <span className="text-muted-foreground">
+          {itemLabel} found on this device.
+          {error && <span className="ml-2 text-danger">{error}</span>}
+        </span>
+        <button
+          type="button"
+          onClick={runImport}
+          disabled={status === "importing"}
+          className="shrink-0 font-medium text-accent transition-opacity hover:underline disabled:opacity-60"
+        >
+          {status === "importing" ? "Importing…" : "Import to sync across devices"}
+        </button>
+        <IconButton
+          aria-label="Dismiss import notice"
+          icon={<XIcon width={13} height={13} />}
+          onClick={dismiss}
+          disabled={status === "importing"}
+          className="ml-auto -my-1.5 shrink-0"
+        />
       </div>
     </div>
   );

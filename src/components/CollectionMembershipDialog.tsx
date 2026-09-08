@@ -7,6 +7,7 @@ import { isDuplicateCollectionName } from "@/lib/collections";
 import { Dialog } from "@/components/Dialog";
 import { inputClass } from "@/components/FormField";
 import { PlusIcon } from "@/components/icons";
+import { Button } from "@/components/Button";
 
 interface CollectionMembershipDialogProps {
   item: LibraryItem | null;
@@ -95,24 +96,16 @@ export function CollectionMembershipDialog({
             </p>
           )}
         </div>
-        <button
-          type="submit"
-          aria-label="Create collection"
-          className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button type="submit" variant="secondary" aria-label="Create collection">
           <PlusIcon width={15} height={15} />
           New
-        </button>
+        </Button>
       </form>
 
       <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="primary" onClick={onClose}>
           Done
-        </button>
+        </Button>
       </div>
     </Dialog>
   );

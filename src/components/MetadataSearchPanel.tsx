@@ -7,6 +7,7 @@ import { getMetadataProvider } from "@/lib/metadata/registry";
 import { partitionByRelevance } from "@/lib/metadata/relevance";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
+import { Button } from "@/components/Button";
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 400;
@@ -282,13 +283,9 @@ export function MetadataSearchPanel({ itemType, onSelect, onManualEntry, initial
 
       <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-muted-foreground">{`Data from ${attributionSources.join(" and ")}`}</p>
-        <button
-          type="button"
-          onClick={onManualEntry}
-          className="shrink-0 rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="secondary" onClick={onManualEntry} className="shrink-0">
           Enter manually
-        </button>
+        </Button>
       </div>
     </div>
   );

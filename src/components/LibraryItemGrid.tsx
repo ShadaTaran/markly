@@ -1,17 +1,24 @@
 import type { LibraryItem, MediaItem, WebsiteItem } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
+import type { LibraryViewMode } from "@/hooks/useLibraryViewMode";
 import { WebsiteItemCard } from "@/components/WebsiteItemCard";
 import { MediaItemCard } from "@/components/MediaItemCard";
+import { WebsiteItemCompactCard } from "@/components/WebsiteItemCompactCard";
+import { MediaItemCompactCard } from "@/components/MediaItemCompactCard";
+import { WebsiteItemRow } from "@/components/WebsiteItemRow";
+import { MediaItemRow } from "@/components/MediaItemRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 import { FolderIcon, GlobeIcon, SearchIcon, StarIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import type { TypeFilterValue } from "@/lib/library-items";
 import { STATUS_FILTER_LABELS, type StatusFilterValue } from "@/lib/tracking";
+import { isMediaItem } from "@/lib/item-detail";
 
 interface LibraryItemGridProps {
   items: LibraryItem[];
   totalItems: number;
+  viewMode: LibraryViewMode;
   searchQuery: string;
   activeType: TypeFilterValue;
   activeStatus: StatusFilterValue;
@@ -32,6 +39,7 @@ interface LibraryItemGridProps {
 export function LibraryItemGrid({
   items,
   totalItems,
+  viewMode,
   searchQuery,
   activeType,
   activeStatus,
@@ -47,6 +55,9 @@ export function LibraryItemGrid({
   onTagClick,
   onQuickIncrement,
 }: LibraryItemGridProps) {
+  // Round 6 — empty/filtered-empty behavior is identical across every view
+  // mode (never an empty Grid/Compact/List shell); this branch runs before
+  // any mode-specific rendering below.
   if (items.length === 0) {
     const trimmedQuery = searchQuery.trim();
     const hasCategoryFilter = activeCategory !== ALL_FILTER && activeCategory !== FAVORITES_FILTER;
@@ -164,8 +175,72 @@ export function LibraryItemGrid({
     );
   }
 
+  if (viewMode === "list") {
+    return (
+      <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
+        {items.map((item) => {
+          if (item.type === "website") {
+            return (
+              <WebsiteItemRow
+                key={item.id}
+                item={item}
+                onToggleFavorite={onToggleFavorite}
+                onEdit={onEdit}
+                onAddToCollection={onAddToCollection}
+                onDeleteRequest={onDeleteRequest}
+              />
+            );
+          }
+          if (!isMediaItem(item)) return null;
+          return (
+            <MediaItemRow
+              key={item.id}
+              item={item}
+              onToggleFavorite={onToggleFavorite}
+              onEdit={onEdit}
+              onAddToCollection={onAddToCollection}
+              onDeleteRequest={onDeleteRequest}
+            />
+          );
+        })}
+      </ul>
+    );
+  }
+
+  if (viewMode === "compact") {
+    return (
+      <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {items.map((item) => {
+          if (item.type === "website") {
+            return (
+              <WebsiteItemCompactCard
+                key={item.id}
+                item={item}
+                onToggleFavorite={onToggleFavorite}
+                onEdit={onEdit}
+                onAddToCollection={onAddToCollection}
+                onDeleteRequest={onDeleteRequest}
+              />
+            );
+          }
+          if (!isMediaItem(item)) return null;
+          return (
+            <MediaItemCompactCard
+              key={item.id}
+              item={item}
+              onToggleFavorite={onToggleFavorite}
+              onEdit={onEdit}
+              onAddToCollection={onAddToCollection}
+              onDeleteRequest={onDeleteRequest}
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {items.map((item) => {
         // "website" and the six media-ish types have real cards today.
         // Future types (article, video, other) plug into this switch with

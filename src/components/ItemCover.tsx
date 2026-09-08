@@ -13,7 +13,7 @@ export function ItemCover({ item }: ItemCoverProps) {
   const showImage = Boolean(item.imageUrl) && !imageFailed;
 
   return (
-    <div className="aspect-[2/3] w-full max-w-[200px] overflow-hidden rounded-lg border border-border bg-surface sm:max-w-[220px]">
+    <div className="aspect-[2/3] w-full max-w-[200px] overflow-hidden rounded-lg border border-border bg-muted sm:max-w-[220px]">
       {showImage ? (
         // eslint-disable-next-line @next/next/no-img-element -- saved cover art from arbitrary hosts; next/image's optimizer isn't a good fit here.
         <img

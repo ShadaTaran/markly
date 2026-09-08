@@ -12,6 +12,8 @@ import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
 import { useReminders } from "@/hooks/useReminders";
+import { PageContainer } from "@/components/PageContainer";
+import { IconButton } from "@/components/IconButton";
 import { getDomain, getFaviconUrl } from "@/lib/website";
 import {
   formatDate,
@@ -20,8 +22,9 @@ import {
   isMediaItem,
   isSupportedLibraryItem,
 } from "@/lib/item-detail";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { SecondaryPageHeader } from "@/components/SecondaryPageHeader";
 import { ItemCover } from "@/components/ItemCover";
+import { ItemDetailSkeleton } from "@/components/ItemDetailSkeleton";
 import { ItemTrackingSection } from "@/components/ItemTrackingSection";
 import { ItemTrackingSourcesSection } from "@/components/ItemTrackingSourcesSection";
 import { ItemMetadataRows } from "@/components/ItemMetadataRows";
@@ -35,7 +38,7 @@ import { UndoToast } from "@/components/UndoToast";
 import { RemindMeContinueDialog } from "@/components/RemindMeContinueDialog";
 import { deleteItemWithRecovery } from "@/lib/recovery-orchestration";
 import { setPendingUndoToast } from "@/lib/library-recovery";
-import { ArrowLeftIcon, BellIcon, ExternalLinkIcon, GlobeIcon, StarIcon } from "@/components/icons";
+import { BellIcon, ExternalLinkIcon, GlobeIcon, StarIcon } from "@/components/icons";
 
 interface ItemDetailViewProps {
   itemId: string;
@@ -46,21 +49,10 @@ function noop() {}
 function DetailShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <Link
-            href="/library"
-            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
-            <ArrowLeftIcon width={16} height={16} />
-            Back to Library
-          </Link>
-          <div className="ml-auto">
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
+      <SecondaryPageHeader maxWidthClassName="max-w-4xl" />
+      <PageContainer width="detail" paddingY="py-8">
+        {children}
+      </PageContainer>
     </div>
   );
 }
@@ -91,7 +83,11 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   }, [resultToast]);
 
   if (!library.isHydrated) {
-    return <DetailShell>{null}</DetailShell>;
+    return (
+      <DetailShell>
+        <ItemDetailSkeleton />
+      </DetailShell>
+    );
   }
 
   const loadError = library.error ?? collectionsStore.error ?? activity.error;
@@ -138,6 +134,20 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const externalLinkLabel = item.type === "website" ? "Open Website" : "Open Source";
   const addedDate = formatDate(item.createdAt);
   const updatedDate = formatDate(item.updatedAt);
+  const genres = media && "genres" in media && media.genres ? media.genres : [];
+  // Display-only dedup — never mutates item.tags. A tag identical to a
+  // genre (case-insensitive) is redundant to show twice on the same page.
+  const distinctTags = item.tags.filter((tag) => !genres.some((genre) => genre.toLowerCase() === tag.toLowerCase()));
+  // Catalog-derived items get their category from the same genre list
+  // (see deriveCategoryAndTags) — category ends up literally "the first
+  // genre." Same display-only rule as tags above: never mutate
+  // item.category, just don't show it a second time when it's redundant
+  // with a genre already on screen. A manually-entered or otherwise
+  // distinct category still renders normally.
+  const trimmedCategory = item.category.trim();
+  const categoryDuplicatesGenre = trimmedCategory !== "" && genres.some((genre) => genre.trim().toLowerCase() === trimmedCategory.toLowerCase());
+  const showCategory = trimmedCategory !== "" && !categoryDuplicatesGenre;
+  const hasDetails = genres.length > 0 || distinctTags.length > 0 || showCategory;
 
   function handleToggleFullForm() {
     if (dialogState?.step !== "form") return;
@@ -202,7 +212,7 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="shrink-0 sm:w-56">
           {item.type === "website" ? (
-            <div className="flex aspect-[2/3] w-full max-w-[200px] items-center justify-center overflow-hidden rounded-lg border border-border bg-surface sm:max-w-[220px]">
+            <div className="flex aspect-[2/3] w-full max-w-[200px] items-center justify-center overflow-hidden rounded-lg border border-border bg-muted sm:max-w-[220px]">
               <FaviconOrGlobe url={item.url} />
             </div>
           ) : (
@@ -218,25 +228,19 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
             <div className="mt-1 flex items-start justify-between gap-3">
               <h1 className="min-w-0 break-words text-xl font-semibold text-foreground">{item.title}</h1>
               <div className="flex shrink-0 items-center gap-0.5">
-                <button
-                  type="button"
+                <IconButton
                   onClick={() => library.toggleFavorite(item.id)}
                   aria-pressed={item.favorite}
                   aria-label={item.favorite ? `Remove ${item.title} from favorites` : `Add ${item.title} to favorites`}
-                  className="rounded p-1.5 text-muted-foreground transition-colors hover:text-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 data-[favorite=true]:text-amber-500"
-                  data-favorite={item.favorite}
-                >
-                  <StarIcon filled={item.favorite} width={20} height={20} />
-                </button>
+                  active={item.favorite}
+                  icon={<StarIcon filled={item.favorite} width={20} height={20} />}
+                />
                 {media && (
-                  <button
-                    type="button"
+                  <IconButton
                     onClick={() => setRemindMeOpen(true)}
                     aria-label={`Remind me to continue ${item.title}`}
-                    className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  >
-                    <BellIcon width={18} height={18} />
-                  </button>
+                    icon={<BellIcon width={18} height={18} />}
+                  />
                 )}
                 <ItemActionsMenu
                   label={item.title}
@@ -252,6 +256,28 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
             )}
           </div>
 
+          {/* UI/UX quality pass — the primary action (Open Source/Website)
+              used to render AFTER tracking controls, the source list, and
+              catalog metadata rows — a user had to scroll past several
+              secondary sections to find "the" thing to click. Promoted to
+              right below the title/identity block, matching the brief's
+              "Continue/Open source should be easy to identify" — every
+              other section keeps its exact existing content, only the
+              external-link CTA moved. */}
+          {externalUrl && (
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={externalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              >
+                <ExternalLinkIcon width={15} height={15} />
+                {externalLinkLabel}
+              </a>
+            </div>
+          )}
+
           {media && (
             <ItemTrackingSection
               item={media}
@@ -265,82 +291,67 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
           {media && <ItemTrackingSourcesSection itemId={itemId} userId={userId} />}
 
           {media && <ItemMetadataRows rows={getCatalogMetadataRows(media)} />}
-
-          {externalUrl && (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <a
-                href={externalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              >
-                <ExternalLinkIcon width={15} height={15} />
-                {externalLinkLabel}
-              </a>
-            </div>
-          )}
         </div>
       </div>
 
       <div className="mt-8 space-y-6 border-t border-border pt-6">
         {item.description && (
           <section>
-            <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-              Description
-            </h2>
+            <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">About</h2>
             <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{item.description}</p>
           </section>
         )}
 
-        {media && "genres" in media && media.genres && media.genres.length > 0 && (
-          <section>
-            <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-              Genres
-            </h2>
-            <div className="flex flex-wrap gap-1.5">
-              {media.genres.map((genre) => (
-                <span key={genre} className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                  {genre}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
+        {hasDetails && (
+          <section className="space-y-3">
+            <h2 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Details</h2>
 
-        {item.tags.length > 0 && (
-          <section>
-            <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Tags</h2>
-            <div className="flex flex-wrap gap-1.5">
-              {item.tags.map((tag) => (
-                <span key={tag} className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
+            {genres.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs text-muted-foreground">Genres</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {genres.map((genre) => (
+                    <span key={genre} className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                      {genre}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
-        {item.category && (
-          <p className="text-xs text-muted-foreground">
-            Category: <span className="text-foreground">{item.category}</span>
-          </p>
+            {distinctTags.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs text-muted-foreground">Tags</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {distinctTags.map((tag) => (
+                    <span key={tag} className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showCategory && (
+              <p className="text-xs text-muted-foreground">
+                Category: <span className="text-foreground">{item.category}</span>
+              </p>
+            )}
+          </section>
         )}
 
         <ItemCollectionsSection collections={itemCollections} onManage={() => setMembershipOpen(true)} />
 
         <ItemActivitySection events={activity.getEventsForItem(itemId)} item={item} />
 
-        {media?.catalogSource && (
-          <p className="text-xs text-muted-foreground">
-            Metadata source: {getProviderLabel(media.catalogSource.provider)}
+        <div className="space-y-0.5 text-xs text-muted-foreground">
+          {media?.catalogSource && <p>Metadata source: {getProviderLabel(media.catalogSource.provider)}</p>}
+          <p>
+            {addedDate && <>Added {addedDate}</>}
+            {addedDate && updatedDate && " · "}
+            {updatedDate && <>Updated {updatedDate}</>}
           </p>
-        )}
-
-        <p className="text-xs text-muted-foreground">
-          {addedDate && <>Added {addedDate}</>}
-          {addedDate && updatedDate && " · "}
-          {updatedDate && <>Updated {updatedDate}</>}
-        </p>
+        </div>
       </div>
 
       <LibraryItemDialog

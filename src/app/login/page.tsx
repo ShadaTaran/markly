@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { AuthForm } from "@/components/AuthForm";
+import { Logo } from "@/components/Logo";
 
 export default async function LoginPage() {
   let alreadySignedIn = false;
@@ -22,9 +23,7 @@ export default async function LoginPage() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4 py-10">
       <div className="mb-6 flex items-center justify-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-sm font-semibold text-background">
-          M
-        </span>
+        <Logo />
         <span className="text-lg font-semibold tracking-tight">Markly</span>
       </div>
       <h1 className="mb-1 text-center text-lg font-semibold text-foreground">Sign in</h1>

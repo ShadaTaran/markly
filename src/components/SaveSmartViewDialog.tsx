@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Dialog } from "@/components/Dialog";
 import { Field, inputClass } from "@/components/FormField";
+import { Button } from "@/components/Button";
 
 interface SaveSmartViewDialogProps {
   mode: "create" | "rename";
@@ -41,19 +42,12 @@ export function SaveSmartViewDialog({ mode, isOpen, initialName, externalError, 
         </Field>
 
         <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
+          </Button>
+          <Button type="submit" variant="primary">
             {mode === "rename" ? "Save Name" : "Save View"}
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>

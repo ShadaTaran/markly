@@ -21,7 +21,10 @@ import { Dialog } from "@/components/Dialog";
 import { MediaItemForm } from "@/components/MediaItemForm";
 import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import type { MetadataDetails } from "@/lib/metadata/types";
-import { ExternalLinkIcon } from "@/components/icons";
+import { ExternalLinkIcon, MoreHorizontalIcon } from "@/components/icons";
+import { Button } from "@/components/Button";
+import { Switch } from "@/components/Switch";
+import { IconButton } from "@/components/IconButton";
 
 interface TrackingSettingsPanelProps {
   initialDevices: DeviceSummary[];
@@ -77,6 +80,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const [addLinkSource, setAddLinkSource] = useState<TrackingSourceSummary | null>(null);
   const [addDialogState, setAddDialogState] = useState<DialogState>(null);
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
+  const [showAllDevices, setShowAllDevices] = useState(false);
 
   // Stage 26 — loaded eagerly (rather than only on first "Add or Link"
   // click, as before) so linked sources can be grouped under their real
@@ -411,12 +415,17 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const linkedGroups = groupLinkedSources(sources, libraryItems);
   const unlinkedSources = sources.filter((source) => !source.libraryItemId);
 
+  const DEVICE_PREVIEW_LIMIT = 4;
+  const sortedDevices = [...devices].sort((a, b) => (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? ""));
+  const recentDevices = sortedDevices.slice(0, DEVICE_PREVIEW_LIMIT);
+  const olderDevices = sortedDevices.slice(DEVICE_PREVIEW_LIMIT);
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <section className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-        <h2 className="text-sm font-semibold text-foreground">Browser Extension</h2>
+        <h2 className="text-base font-semibold text-foreground">Browser Extension</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Connect the Markly browser extension to automatically track your progress on supported reading pages.
         </p>
@@ -428,92 +437,70 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
             <p className="mt-1 text-xs text-muted-foreground">Expires in about 10 minutes.</p>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={generateCode}
-            disabled={busy !== null}
-            className="mt-3 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
-          >
+          <Button variant="primary" onClick={generateCode} disabled={busy !== null} className="mt-3 min-w-40">
             {busy === "pairing-code" ? "Generating…" : "Connect Extension"}
-          </button>
+          </Button>
         )}
 
         {devices.length > 0 && (
-          <div className="mt-4">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Connected Devices</h3>
-            <ul className="mt-2 space-y-2">
-              {devices.map((device) => (
-                <li key={device.id} className="space-y-3 rounded-md border border-border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-foreground">{device.name}</p>
-                      <p className="text-xs text-muted-foreground">Last active: {formatRelative(device.lastSeenAt)}</p>
-                    </div>
-                    {revokeConfirmId === device.id ? (
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => revokeDevice(device.id)}
-                          disabled={busy !== null}
-                          className="rounded-md border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
-                        >
-                          {busy === `revoke-${device.id}` ? "Revoking…" : "Confirm"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRevokeConfirmId(null)}
-                          className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setRevokeConfirmId(device.id)}
-                        disabled={busy !== null}
-                        className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
-                      >
-                        Revoke
-                      </button>
-                    )}
-                  </div>
+          <div className="mt-4 border-t border-border pt-4">
+            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+              Connected Devices · {devices.length}
+            </h3>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Auto-add automatically adds and starts tracking new works Markly confidently detects, per device.
+            </p>
 
-                  <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
-                    <div>
-                      <p className="text-xs font-medium text-foreground">Automatically add new works</p>
-                      <p className="text-xs text-muted-foreground">
-                        When Markly confidently detects something you&apos;re reading that isn&apos;t already in your library,
-                        add it and start tracking automatically.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={device.autoAddEnabled}
-                      aria-label="Automatically add new works"
-                      onClick={() => toggleAutoAdd(device.id, !device.autoAddEnabled)}
-                      disabled={busy !== null}
-                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
-                        device.autoAddEnabled ? "bg-accent" : "bg-border"
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-background transition-transform ${
-                          device.autoAddEnabled ? "translate-x-4" : "translate-x-0"
-                        }`}
-                      />
-                    </button>
-                  </div>
-                </li>
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {recentDevices.map((device) => (
+                <DeviceRow
+                  key={device.id}
+                  device={device}
+                  busy={busy}
+                  revokeConfirmId={revokeConfirmId}
+                  onToggleAutoAdd={toggleAutoAdd}
+                  onRequestRevoke={setRevokeConfirmId}
+                  onRevoke={revokeDevice}
+                />
               ))}
             </ul>
+
+            {olderDevices.length > 0 && (
+              <div className="mt-4">
+                <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  Older Devices · {olderDevices.length}
+                </p>
+                {showAllDevices ? (
+                  <ul className="divide-y divide-border rounded-md border border-border">
+                    {olderDevices.map((device) => (
+                      <DeviceRow
+                        key={device.id}
+                        device={device}
+                        busy={busy}
+                        revokeConfirmId={revokeConfirmId}
+                        onToggleAutoAdd={toggleAutoAdd}
+                        onRequestRevoke={setRevokeConfirmId}
+                        onRevoke={revokeDevice}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllDevices(true)}
+                    className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    Show older devices
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </section>
 
-      <section className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-        <h2 className="text-sm font-semibold text-foreground">Tracked Sources</h2>
+      <section>
+        <h2 className="mb-1 text-base font-semibold text-foreground">Tracked Sources</h2>
         {sources.length === 0 ? (
           <p className="mt-1 text-sm text-muted-foreground">
             Nothing detected yet. Sources appear here once the extension sees a supported page.
@@ -522,34 +509,34 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
           <div className="mt-3 space-y-5">
             {linkedGroups.length > 0 && (
               <div className="space-y-3">
-                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Linked</h3>
+                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+                  Linked · {linkedGroups.reduce((total, group) => total + group.sources.length, 0)}
+                </h3>
                 {linkedGroups.map((group) => (
-                  <div key={group.itemId} className="rounded-md border border-border p-3">
-                    <div className="flex items-center justify-between gap-3">
+                  <div key={group.itemId}>
+                    <div className="mb-1.5 flex items-baseline justify-between gap-3">
                       <p className="text-sm font-medium text-foreground">{group.itemTitle}</p>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {group.sources.length} source{group.sources.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <ul className="mt-2 space-y-2">
+                    <ul className="divide-y divide-border rounded-md border border-border">
                       {group.sources.map((source) => {
                         const hostname = getSourceHostname(source.sourceUrl);
                         const openUrl = getSafeOpenSourceUrl(source);
                         return (
-                          <li key={source.id} className="rounded-md border border-border p-2.5">
+                          <li key={source.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3 py-2.5">
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-foreground">
+                              <p className="truncate text-sm text-foreground">
                                 {getSourceDisplayName(source.adapterId, source.sourceUrl)}
+                                {hostname && <span className="text-muted-foreground"> · {hostname}</span>}
                               </p>
-                              {hostname && <p className="truncate text-xs text-muted-foreground">{hostname}</p>}
+                              <p className="text-xs text-muted-foreground">
+                                {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)} · Auto
+                                Tracking: {source.autoTrackEnabled ? "On" : "Off"}
+                              </p>
                             </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              Auto Tracking: {source.autoTrackEnabled ? "On" : "Off"}
-                            </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
                               {openUrl && (
                                 <a
                                   href={openUrl}
@@ -561,22 +548,13 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                                   Open Source
                                 </a>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => toggleAutoTrack(source.id, !source.autoTrackEnabled)}
-                                disabled={busy !== null}
-                                className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
-                              >
-                                {busy === `toggle-${source.id}` ? "Updating…" : source.autoTrackEnabled ? "Disable" : "Enable"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => unlinkSource(source.id)}
-                                disabled={busy !== null}
-                                className="text-xs font-medium text-muted-foreground transition-colors hover:text-danger disabled:opacity-60"
-                              >
-                                {busy === `unlink-${source.id}` ? "Unlinking…" : "Unlink"}
-                              </button>
+                              <SourceActionsMenu
+                                label={getSourceDisplayName(source.adapterId, source.sourceUrl)}
+                                autoTrackEnabled={source.autoTrackEnabled}
+                                busy={busy === `toggle-${source.id}` || busy === `unlink-${source.id}`}
+                                onToggleAutoTrack={() => toggleAutoTrack(source.id, !source.autoTrackEnabled)}
+                                onUnlink={() => unlinkSource(source.id)}
+                              />
                             </div>
                           </li>
                         );
@@ -589,23 +567,36 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
 
             {unlinkedSources.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">Unlinked</h3>
-                <ul className="space-y-2">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+                  Unlinked · {unlinkedSources.length}
+                </h3>
+                <ul className="divide-y divide-border rounded-md border border-border">
                   {unlinkedSources.map((source) => {
                     const compatibleItems = (libraryItems ?? []).filter((item) => item.type === source.mediaType);
                     const filteredItems = compatibleItems.filter((item) => item.title.toLowerCase().includes(itemFilter.toLowerCase()));
 
                     return (
-                      <li key={source.id} className="rounded-md border border-border p-3">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{source.sourceTitle}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {getSourceDisplayName(source.adapterId, source.sourceUrl)} · {ITEM_TYPE_LABELS[source.mediaType]} ·{" "}
-                            {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
-                          </p>
+                      <li key={source.id} className="px-3 py-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-foreground">{source.sourceTitle}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {getSourceDisplayName(source.adapterId, source.sourceUrl)} · {ITEM_TYPE_LABELS[source.mediaType]} ·{" "}
+                              {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
+                            </p>
+                          </div>
+                          {linkingSourceId !== source.id && (
+                            <button
+                              type="button"
+                              onClick={() => openLinkPicker(source.id)}
+                              className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
+                            >
+                              Add or Link
+                            </button>
+                          )}
                         </div>
 
-                        {linkingSourceId === source.id ? (
+                        {linkingSourceId === source.id && (
                           <div className="mt-2 space-y-2">
                             <input
                               type="text"
@@ -650,17 +641,6 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                                 Cancel
                               </button>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="mt-2 flex items-center justify-between gap-3">
-                            <p className="text-xs text-muted-foreground">Not linked</p>
-                            <button
-                              type="button"
-                              onClick={() => openLinkPicker(source.id)}
-                              className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
-                            >
-                              Add or Link
-                            </button>
                           </div>
                         )}
                       </li>
@@ -715,6 +695,148 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
           />
         )}
       </Dialog>
+    </div>
+  );
+}
+
+interface DeviceRowProps {
+  device: DeviceSummary;
+  busy: string | null;
+  revokeConfirmId: string | null;
+  onToggleAutoAdd: (deviceId: string, enabled: boolean) => void;
+  onRequestRevoke: (deviceId: string | null) => void;
+  onRevoke: (deviceId: string) => void;
+}
+
+function DeviceRow({ device, busy, revokeConfirmId, onToggleAutoAdd, onRequestRevoke, onRevoke }: DeviceRowProps) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="truncate text-sm text-foreground">{device.name}</p>
+        <p className="text-xs text-muted-foreground">Last active {formatRelative(device.lastSeenAt)}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Auto-add</span>
+          <Switch
+            checked={device.autoAddEnabled}
+            onChange={(enabled) => onToggleAutoAdd(device.id, enabled)}
+            disabled={busy !== null}
+            aria-label={`Auto-add for ${device.name}`}
+          />
+        </div>
+        {revokeConfirmId === device.id ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onRevoke(device.id)}
+              disabled={busy !== null}
+              className="rounded-md border border-danger/40 px-2 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-60"
+            >
+              {busy === `revoke-${device.id}` ? "Revoking…" : "Confirm"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRequestRevoke(null)}
+              className="rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onRequestRevoke(device.id)}
+            disabled={busy !== null}
+            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-60"
+          >
+            Revoke
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+interface SourceActionsMenuProps {
+  /** Used to build the trigger's accessible name: `More actions for ${label}`. */
+  label: string;
+  autoTrackEnabled: boolean;
+  busy: boolean;
+  onToggleAutoTrack: () => void;
+  onUnlink: () => void;
+}
+
+/**
+ * Round 4 — a linked source row previously showed Open Source, Disable/
+ * Enable, and Unlink all inline (three competing actions of unclear
+ * relative importance). Open Source stays inline as the one primary
+ * action; the two maintenance actions move behind this small overflow
+ * menu, visually matching ItemActionsMenu's pattern without changing that
+ * shared component's fixed Edit/Delete contract (used elsewhere by
+ * CollectionHeader and Item Detail).
+ */
+function SourceActionsMenu({ label, autoTrackEnabled, busy, onToggleAutoTrack, onUnlink }: SourceActionsMenuProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
+
+  return (
+    <div className="relative shrink-0" ref={menuRef}>
+      <IconButton
+        onClick={() => setMenuOpen((open) => !open)}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label={`More actions for ${label}`}
+        icon={<MoreHorizontalIcon width={16} height={16} />}
+      />
+
+      {menuOpen && (
+        <div role="menu" className="absolute right-0 top-full z-10 mt-1 w-44 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-sm">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onToggleAutoTrack();
+            }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
+          >
+            {autoTrackEnabled ? "Disable tracking" : "Enable tracking"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onUnlink();
+            }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-sm text-danger hover:bg-surface-hover"
+          >
+            Unlink
+          </button>
+        </div>
+      )}
     </div>
   );
 }

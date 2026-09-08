@@ -6,6 +6,7 @@ import { TRACKING_STATUS_OPTIONS } from "@/lib/tracking";
 import { parseCount, parseDecimal, parsePercent, parseRating } from "@/lib/form-number-parsing";
 import type { CatalogDisplay } from "@/lib/metadata/display";
 import { Field, inputClass } from "@/components/FormField";
+import { Button } from "@/components/Button";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
 
 export interface PersonalTrackingValues {
@@ -327,19 +328,12 @@ export function CatalogTrackingForm({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
+          <Button variant="secondary" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
+          </Button>
+          <Button type="submit" variant="primary">
             {mode === "edit" ? "Save Changes" : "Add to Library"}
-          </button>
+          </Button>
         </div>
       </div>
     </form>

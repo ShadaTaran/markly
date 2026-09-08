@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { IconButton } from "@/components/IconButton";
 import { MoreHorizontalIcon, PencilIcon, TrashIcon } from "@/components/icons";
 
 interface ItemActionsMenuProps {
@@ -50,16 +51,13 @@ export function ItemActionsMenu({
 
   return (
     <div className="relative shrink-0" ref={menuRef}>
-      <button
-        type="button"
+      <IconButton
         onClick={() => setMenuOpen((open) => !open)}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label={`Actions for ${label}`}
-        className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-      >
-        <MoreHorizontalIcon />
-      </button>
+        icon={<MoreHorizontalIcon />}
+      />
 
       {menuOpen && (
         <div

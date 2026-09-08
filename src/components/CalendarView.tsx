@@ -2,10 +2,13 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 import type { LibraryItem } from "@/types/library-item";
 import type { ReleaseEvent } from "@/types/release-event";
 import type { Reminder, ReleaseReminder, ReleaseReminderTarget } from "@/types/reminder";
 import { Header } from "@/components/Header";
+import { ImportBanner } from "@/components/ImportBanner";
+import { PageContainer } from "@/components/PageContainer";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
@@ -53,6 +56,8 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
   const hasAnyEligibleItem = useMemo(() => buildAniListMediaAssociation(items).size > 0, [items]);
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const groups = useMemo(() => groupReleaseEventsByLocalDay(calendar.events, timeZone), [calendar.events, timeZone]);
+  const nextEvent = groups[0]?.events[0];
+  const nextEventTitle = nextEvent ? (nextEvent.title ?? itemsById.get(nextEvent.libraryItemId)?.title) : undefined;
 
   const loading = Boolean(userId) && !library.isHydrated;
   const loadError = library.error ?? activity.error;
@@ -65,10 +70,22 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header active="calendar" />
+      <ImportBanner />
 
-      <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-lg font-semibold text-foreground">Calendar</h1>
+      <PageContainer width="narrow" className="space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-foreground">Calendar</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Next {rangeDays} days
+              {nextEventTitle && (
+                <>
+                  {" "}
+                  · Next up: <span className="text-foreground">{nextEventTitle}</span>
+                </>
+              )}
+            </p>
+          </div>
           <RangeSelect value={rangeDays} onChange={setRangeDays} />
         </div>
 
@@ -93,7 +110,7 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
               <div className="space-y-6">
                 {groups.map((group) => (
                   <section key={group.dayKey}>
-                    <h2 className="mb-2 text-sm font-semibold text-foreground">
+                    <h2 className="mb-2 text-base font-semibold text-foreground">
                       {formatReleaseDayLabel(group.dayKey, timeZone, new Date())}
                     </h2>
                     <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
@@ -103,6 +120,7 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
                           event={event}
                           item={itemsById.get(event.libraryItemId)}
                           timeZone={timeZone}
+                          isNext={event.id === nextEvent?.id}
                           existingReminder={findReleaseReminder(event, remindersStore.reminders)}
                           onRemind={(existing) => setRemindDialog({ event, existing })}
                           onRemoveReminder={setRemovingReminder}
@@ -115,7 +133,7 @@ export function CalendarView({ items: initialItems }: CalendarViewProps) {
             )}
           </>
         )}
-      </main>
+      </PageContainer>
 
       <RemindMeReleaseDialog
         isOpen={remindDialog !== null}
@@ -183,7 +201,7 @@ function RangeSelect({ value, onChange }: { value: CalendarRangeDays; onChange: 
           onClick={() => onChange(option)}
           aria-pressed={value === option}
           className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-            value === option ? "bg-surface-hover text-foreground" : "text-muted-foreground hover:text-foreground"
+            value === option ? "bg-accent/10 text-accent" : "text-muted-foreground hover:text-foreground"
           }`}
         >
           {option}d
@@ -197,6 +215,7 @@ function EventRow({
   event,
   item,
   timeZone,
+  isNext,
   existingReminder,
   onRemind,
   onRemoveReminder,
@@ -204,6 +223,7 @@ function EventRow({
   event: ReleaseEvent;
   item: LibraryItem | undefined;
   timeZone: string;
+  isNext: boolean;
   existingReminder: ReleaseReminder | null;
   onRemind: (existing: ReleaseReminder | null) => void;
   onRemoveReminder: (reminder: ReleaseReminder) => void;
@@ -216,12 +236,12 @@ function EventRow({
 
   const content = (
     <>
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
         {item && "imageUrl" in item && item.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- user-provided cover art from arbitrary hosts; next/image's optimizer isn't a good fit for this (same convention as MediaItemCard).
           <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <ItemTypeIcon type={item?.type ?? "anime"} width={16} height={16} className="text-muted-foreground" aria-hidden="true" />
+          <ItemTypeIcon type={item?.type ?? "anime"} width={18} height={18} className="text-muted-foreground" aria-hidden="true" />
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -232,7 +252,7 @@ function EventRow({
         </p>
       </div>
       <div className="shrink-0 text-right">
-        <p className="text-xs font-medium text-foreground" title={fullDateTime}>
+        <p className={cn("text-sm font-semibold", isNext ? "text-accent" : "text-foreground")} title={fullDateTime}>
           <time dateTime={event.startsAt}>{time}</time>
         </p>
         <p className="text-[10px] text-muted-foreground/70">{getProviderLabel("anilist")}</p>
@@ -241,7 +261,7 @@ function EventRow({
   );
 
   return (
-    <li className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+    <li className={cn("flex flex-wrap items-center gap-3 px-4 py-2.5", isNext && "bg-accent/5")}>
       {href ? (
         <Link href={href} className="flex min-w-0 flex-1 items-center gap-3 hover:bg-surface-hover" aria-label={`Open ${title}, Episode ${event.episode}, ${fullDateTime}`}>
           {content}
@@ -250,7 +270,7 @@ function EventRow({
         <div className="flex min-w-0 flex-1 items-center gap-3 opacity-70">{content}</div>
       )}
       {event.episode !== undefined && (
-        <div className="flex w-full shrink-0 items-center gap-2 pl-12 text-xs font-medium sm:w-auto sm:pl-0">
+        <div className="flex w-full shrink-0 items-center gap-2 pl-[60px] text-xs font-medium sm:w-auto sm:pl-0">
           {existingReminder ? (
             <>
               <span className="inline-flex items-center gap-1 text-muted-foreground">

@@ -2,6 +2,7 @@
 
 import type { SavedSmartView } from "@/types/smart-view";
 import { Dialog } from "@/components/Dialog";
+import { Button } from "@/components/Button";
 
 interface DeleteSmartViewDialogProps {
   view: SavedSmartView | null;
@@ -21,20 +22,12 @@ export function DeleteSmartViewDialog({ view, onCancel, onConfirm }: DeleteSmart
         )}
       </p>
       <div className="mt-4 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          className="rounded-md border border-danger/40 px-3.5 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        </Button>
+        <Button variant="destructive" onClick={onConfirm}>
           Delete
-        </button>
+        </Button>
       </div>
     </Dialog>
   );

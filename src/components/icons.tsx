@@ -263,3 +263,41 @@ export function ClockIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function GridIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="3" width="8" height="8" rx="1.5" />
+      <rect x="3" y="13" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
+    </svg>
+  );
+}
+
+export function CompactGridIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="3" y="3" width="5.5" height="5.5" rx="1" />
+      <rect x="15.5" y="3" width="5.5" height="5.5" rx="1" />
+      <rect x="3" y="9.25" width="5.5" height="5.5" rx="1" />
+      <rect x="15.5" y="9.25" width="5.5" height="5.5" rx="1" />
+      <rect x="3" y="15.5" width="5.5" height="5.5" rx="1" />
+      <rect x="15.5" y="15.5" width="5.5" height="5.5" rx="1" />
+      <rect x="9.25" y="3" width="5.5" height="5.5" rx="1" />
+      <rect x="9.25" y="9.25" width="5.5" height="5.5" rx="1" />
+      <rect x="9.25" y="15.5" width="5.5" height="5.5" rx="1" />
+    </svg>
+  );
+}
+
+export function ListViewIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="3" y="4.5" width="4" height="4" rx="1" />
+      <path d="M10.5 6.5h10" />
+      <rect x="3" y="15.5" width="4" height="4" rx="1" />
+      <path d="M10.5 17.5h10" />
+    </svg>
+  );
+}

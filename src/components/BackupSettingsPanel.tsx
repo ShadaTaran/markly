@@ -1,13 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { useLocalImport } from "@/hooks/useLocalImport";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { DataErrorBanner } from "@/components/DataStatus";
+import { Button } from "@/components/Button";
 import { buildAndValidateBackup } from "@/lib/backup/export";
 import { fetchActivityEventsForExport } from "@/lib/cloud/backup";
 import { downloadBackupFile } from "@/lib/backup/download";
@@ -77,6 +79,15 @@ export function BackupSettingsPanel() {
   const library = useLibraryItems([], activity.logEvent, userId);
   const collectionsStore = useCollections(library.items, library.isHydrated, userId);
   const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
+  const localImport = useLocalImport(userId);
+
+  // Mirrors ImportBanner's own reload: every cloud-aware hook on this page
+  // needs to re-fetch from the now-populated database after a sync.
+  useEffect(() => {
+    if (localImport.status !== "done") return;
+    const timeout = setTimeout(() => window.location.reload(), 900);
+    return () => clearTimeout(timeout);
+  }, [localImport.status]);
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -213,27 +224,37 @@ export function BackupSettingsPanel() {
   }
 
   return (
-    <div className="space-y-8">
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Export</h2>
+    <div className="space-y-6">
+      {localImport.hasPendingImport && localImport.summary && (
+        <section className="rounded-md border border-border bg-muted px-4 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">Sync This Device</p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-foreground">
+              Move {localImport.summary.itemCount} local-only item{localImport.summary.itemCount === 1 ? "" : "s"} on this device
+              into your signed-in Markly library.
+            </p>
+            <Button variant="secondary" onClick={localImport.runImport} disabled={localImport.status === "importing"}>
+              {localImport.status === "importing" ? "Syncing…" : "Sync now"}
+            </Button>
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5">
+        <h2 className="text-base font-semibold text-foreground">Export</h2>
         <p className="text-sm text-muted-foreground">
-          {userId ? "Download a portable copy of your Markly cloud library." : "Download a portable copy of this device's local Markly library."}
+          {userId ? "Download a portable copy of your cloud library." : "Download a portable copy of this device's local library."}
         </p>
         <p className="text-xs text-muted-foreground">Your backup contains your Markly library data. Store it somewhere you trust.</p>
         {exportError && <DataErrorBanner message={exportError} onRetry={() => setExportError(null)} />}
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={exporting}
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-50"
-        >
+        <Button variant="primary" onClick={handleExport} disabled={exporting} className="min-w-32">
           {exporting ? "Preparing…" : "Export backup"}
-        </button>
+        </Button>
       </section>
 
-      <section className="space-y-3 border-t border-border pt-6">
-        <h2 className="text-sm font-semibold text-foreground">Import</h2>
-        <p className="text-sm text-muted-foreground">Restore or add data from a Markly backup. Nothing changes until you confirm.</p>
+      <section className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5">
+        <h2 className="text-base font-semibold text-foreground">Import Backup</h2>
+        <p className="text-sm text-muted-foreground">Restore or add items from a Markly backup file. Nothing changes until you confirm.</p>
         <p className="text-xs text-muted-foreground">Automatic tracking connections are not included in backups.</p>
 
         {importState.step === "idle" && (
@@ -384,20 +405,12 @@ function ImportPreview({ validated, plan, includePossibleDuplicates, activitySki
       )}
 
       <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover"
-        >
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
-        >
+        </Button>
+        <Button variant="primary" onClick={onConfirm}>
           Import
-        </button>
+        </Button>
       </div>
     </div>
   );

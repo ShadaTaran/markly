@@ -4,6 +4,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccountMenu } from "@/components/AccountMenu";
 import { ReminderBell } from "@/components/ReminderBell";
 import { PlusIcon } from "@/components/icons";
+import { Button } from "@/components/Button";
+import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
 
 interface HeaderProps {
@@ -25,9 +27,7 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
     <header className="border-b border-border">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 sm:px-6 lg:px-8">
         <div className="flex shrink-0 items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-sm font-semibold text-background">
-            M
-          </span>
+          <Logo />
           <span className="text-lg font-semibold tracking-tight">Markly</span>
         </div>
 
@@ -40,7 +40,7 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
               className={cn(
                 "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
                 active === item.id
-                  ? "bg-surface-hover text-foreground"
+                  ? "bg-accent/10 text-accent"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -60,14 +60,10 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
           <ThemeToggle />
           <AccountMenu />
           {onAddItem && (
-            <button
-              type="button"
-              onClick={onAddItem}
-              className="flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            >
+            <Button variant="primary" onClick={onAddItem}>
               <PlusIcon width={16} height={16} />
               Add Item
-            </button>
+            </Button>
           )}
         </div>
       </div>

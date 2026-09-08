@@ -41,7 +41,7 @@ export function ReminderBell() {
     <Link
       href="/reminders"
       aria-label={dueCount > 0 ? `Reminders, ${dueCount} due` : "Reminders"}
-      className="relative rounded-md p-2 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      className="relative rounded-md p-2.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
     >
       <BellIcon width={18} height={18} />
       {dueCount > 0 && (

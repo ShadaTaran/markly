@@ -6,8 +6,8 @@ import type { Collection, CollectionInput } from "@/types/collection";
 import type { SavedSmartView, SmartViewDefinition } from "@/types/smart-view";
 import { defaultSmartViewDefinition } from "@/types/smart-view";
 import { Header } from "@/components/Header";
-import { FilterTabs } from "@/components/FilterTabs";
-import { CollectionFilterBar } from "@/components/CollectionFilterBar";
+import { ImportBanner } from "@/components/ImportBanner";
+import { PageContainer } from "@/components/PageContainer";
 import { CollectionHeader } from "@/components/CollectionHeader";
 import { CollectionDialog } from "@/components/CollectionDialog";
 import { DeleteCollectionDialog } from "@/components/DeleteCollectionDialog";
@@ -16,6 +16,8 @@ import { LibraryItemGrid } from "@/components/LibraryItemGrid";
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import { DeleteLibraryItemDialog } from "@/components/DeleteLibraryItemDialog";
 import { LibrarySortSelect } from "@/components/LibrarySortSelect";
+import { LibraryViewModeSwitcher } from "@/components/LibraryViewModeSwitcher";
+import { useLibraryViewMode } from "@/hooks/useLibraryViewMode";
 import { SmartViewsBar } from "@/components/SmartViewsBar";
 import { LibraryFiltersPanel } from "@/components/LibraryFiltersPanel";
 import { FilterChips } from "@/components/FilterChips";
@@ -24,8 +26,9 @@ import { DeleteSmartViewDialog } from "@/components/DeleteSmartViewDialog";
 import { SlidersIcon, SearchIcon } from "@/components/icons";
 import { ALL_FILTER, FAVORITES_FILTER } from "@/lib/constants";
 import { useAuth } from "@/components/AuthProvider";
-import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
+import { DataErrorBanner } from "@/components/DataStatus";
 import { EmptyState } from "@/components/EmptyState";
+import { LibraryGridSkeleton } from "@/components/LibraryGridSkeleton";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
@@ -33,7 +36,7 @@ import { useSmartViews } from "@/hooks/useSmartViews";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { useReminders } from "@/hooks/useReminders";
 import { getValidItemIds } from "@/lib/collections";
-import { getCategories, getItemTypeOptions, getUniqueCategories, type TypeFilterValue } from "@/lib/library-items";
+import { getCategories, getUniqueCategories, type TypeFilterValue } from "@/lib/library-items";
 import {
   BUILT_IN_SMART_VIEWS,
   describeActiveFilters,
@@ -45,7 +48,7 @@ import {
   sortSmartViewItems,
   type SmartViewContext,
 } from "@/lib/smart-views";
-import { getStatusOptions, type StatusFilterValue } from "@/lib/tracking";
+import type { StatusFilterValue } from "@/lib/tracking";
 import type { MetadataDetails } from "@/lib/metadata/types";
 import { findDuplicateGroups, type DuplicateGroup } from "@/lib/duplicate-detection";
 import { DuplicateMergeDialog } from "@/components/DuplicateMergeDialog";
@@ -109,6 +112,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   // exactly, unchanged.
   // ============================================================
   const [currentDefinition, setCurrentDefinition] = useState<SmartViewDefinition>(defaultSmartViewDefinition());
+  const { viewMode, setViewMode } = useLibraryViewMode();
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
   const [saveViewDialogState, setSaveViewDialogState] = useState<SaveViewDialogState>(null);
@@ -171,39 +175,22 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     [collections, activitySummaryStore.summary],
   );
 
-  // Faceted-style counts: each tab's own count reflects every OTHER active
-  // dimension's own count on exactly what came before it — reproduces the
-  // exact existing one-directional cascade (Collection > Type > Status:
-  // each level's OWN options are computed from every prior level, never
-  // from itself or a later one) rather than a fully-independent faceted
-  // count, which would be a behavior change from today's Library.
-  const rawCollectionScope = items; // Collection is the outermost facet — nothing scopes it.
-  const itemsForTypeCount = useMemo(
-    () => filterSmartViewItems(items, { ...currentDefinition, mediaTypes: [], statuses: [] }, smartViewContext),
-    [items, currentDefinition, smartViewContext],
-  );
-  const itemsForStatusCount = useMemo(
-    () => filterSmartViewItems(items, { ...currentDefinition, statuses: [] }, smartViewContext),
-    [items, currentDefinition, smartViewContext],
-  );
+  // Collection is the outermost facet — nothing scopes it.
+  const rawCollectionScope = items;
 
-  const collectionTabOptions = useMemo(
-    () => [
-      { id: ALL_FILTER, label: "All Items", count: rawCollectionScope.length },
-      ...collections.map((collection) => ({ id: collection.id, label: collection.name, count: getValidItemIds(collection, rawCollectionScope).length })),
-    ],
-    [collections, rawCollectionScope],
-  );
   const activeCollectionTabId = currentDefinition.collections.length === 1 ? currentDefinition.collections[0] : ALL_FILTER;
   const activeCollection = useMemo(
     () => (activeCollectionTabId === ALL_FILTER ? undefined : collections.find((collection) => collection.id === activeCollectionTabId)),
     [collections, activeCollectionTabId],
   );
 
-  const typeOptions = useMemo(() => getItemTypeOptions(itemsForTypeCount), [itemsForTypeCount]);
+  // Type/Status no longer have their own quick-tab row (round 4 — that row
+  // duplicated LibraryFiltersPanel's Media Type/Status checkboxes, which
+  // read/write these exact same currentDefinition fields; see the doc
+  // comment above currentDefinition's declaration). activeTypeTabId/
+  // activeStatusTabId are still derived here since LibraryItemGrid's empty-
+  // state copy keys off them.
   const activeTypeTabId: TypeFilterValue = currentDefinition.mediaTypes.length === 1 ? currentDefinition.mediaTypes[0] : ALL_FILTER;
-
-  const statusOptions = useMemo(() => getStatusOptions(itemsForStatusCount), [itemsForStatusCount]);
   const activeStatusTabId: StatusFilterValue = currentDefinition.statuses.length === 1 ? currentDefinition.statuses[0] : ALL_FILTER;
 
   // Category is deliberately NOT part of SmartViewDefinition (Stage 31's
@@ -269,14 +256,6 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
       setSelectedViewId(id);
       setCurrentDefinition(saved.definition);
     }
-  }
-
-  function handleSetType(id: string) {
-    setCurrentDefinition((current) => ({ ...current, mediaTypes: id === ALL_FILTER ? [] : [id as SmartViewDefinition["mediaTypes"][number]] }));
-  }
-
-  function handleSetStatus(id: string) {
-    setCurrentDefinition((current) => ({ ...current, statuses: id === ALL_FILTER ? [] : [id as SmartViewDefinition["statuses"][number]] }));
   }
 
   function handleSetCollectionTab(id: string) {
@@ -524,8 +503,9 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
         onSearchQueryChange={(value) => setCurrentDefinition((current) => ({ ...current, query: value }))}
         onAddItem={handleOpenAddDialog}
       />
+      <ImportBanner />
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <PageContainer>
         {loadError && (
           <div className="mb-4">
             <DataErrorBanner message={loadError} onRetry={retryLoad} />
@@ -533,7 +513,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
         )}
 
         {loading ? (
-          <DataLoadingPlaceholder label="Loading your library…" />
+          <LibraryGridSkeleton />
         ) : (
           <>
             <SmartViewsBar
@@ -546,42 +526,83 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
               onDeleteRequest={handleRequestDeleteView}
             />
 
-            <div className="mt-4">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Collection
-              </p>
-              <CollectionFilterBar options={collectionTabOptions} activeId={activeCollectionTabId} onChange={handleSetCollectionTab} onCreateCollection={handleOpenCreateCollection} />
+            {/* UI/UX quality pass, round 2 — Collection/Type/Status/Category
+                quick-tabs and the advanced filter panel now share ONE
+                "Filters" disclosure on every breakpoint (not just mobile):
+                confirmed live these four rows alone pushed real library
+                items ~800px+ down the page at 375px before a single item
+                was visible, and desktop had the same four rows plus the
+                separate advanced panel stacked before content. Smart Views,
+                search (in Header), sort, and the active-filter chip summary
+                stay always visible per the round-2 brief; everything else
+                lives behind one toggle. No Stage 31 filtering capability
+                was removed — same components, same handlers, same
+                SmartViewDefinition, just grouped under one disclosure. */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowFiltersPanel((current) => !current)}
+                aria-expanded={showFiltersPanel}
+                className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
+              >
+                <SlidersIcon width={14} height={14} />
+                Filters
+              </button>
+
+              {isAdHocOrViewActive && !activeSavedView && (
+                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
+                  Save as Smart View
+                </button>
+              )}
+              {activeSavedView && !isModifiedFromSaved && (
+                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
+                  Save as new view
+                </button>
+              )}
+
+              <div className="ml-auto flex items-center gap-3">
+                <LibraryViewModeSwitcher value={viewMode} onChange={setViewMode} />
+                <LibrarySortSelect value={currentDefinition.sort} onChange={(sort) => setCurrentDefinition((current) => ({ ...current, sort }))} />
+              </div>
+            </div>
+
+            {/* Round 6 — Category (no SmartViewDefinition equivalent — Stage
+                31's schema deliberately excludes it, handled as its own
+                ad-hoc dimension below) now renders as one more fieldset
+                inside LibraryFiltersPanel instead of a separate row above
+                it, so it reads as part of the filter set rather than an
+                unrelated legacy control. Collection/Type/Status stay
+                removed from any quick-tab row — they're the exact same
+                currentDefinition.mediaTypes/statuses/collections fields
+                the panel's tiles/chips already expose as multi-select. */}
+            {showFiltersPanel && (
+              <div className="mt-3">
+                <LibraryFiltersPanel
+                  definition={currentDefinition}
+                  collections={collections}
+                  categories={categories}
+                  activeCategory={activeCategory}
+                  onCategoryChange={setSelectedCategory}
+                  onChange={setCurrentDefinition}
+                  onCreateCollection={handleOpenCreateCollection}
+                />
+              </div>
+            )}
+
+            <div className="mt-3">
+              <FilterChips chips={filterChips} onRemove={handleRemoveChip} onClearAll={handleClearAllFilters} />
             </div>
 
             {activeCollection && (
-              <CollectionHeader
-                collection={activeCollection}
-                itemCount={getValidItemIds(activeCollection, rawCollectionScope).length}
-                onEdit={() => handleOpenEditCollection(activeCollection)}
-                onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
-              />
+              <div className="mt-4">
+                <CollectionHeader
+                  collection={activeCollection}
+                  itemCount={getValidItemIds(activeCollection, rawCollectionScope).length}
+                  onEdit={() => handleOpenEditCollection(activeCollection)}
+                  onDeleteRequest={() => handleRequestDeleteCollection(activeCollection)}
+                />
+              </div>
             )}
-
-            <div className="mt-4">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Type
-              </p>
-              <FilterTabs options={typeOptions} activeId={activeTypeTabId} onChange={handleSetType} ariaLabel="Filter library by type" />
-            </div>
-
-            <div className="mt-4">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Status
-              </p>
-              <FilterTabs options={statusOptions} activeId={activeStatusTabId} onChange={handleSetStatus} ariaLabel="Filter library by status" />
-            </div>
-
-            <div className="mt-4">
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Category
-              </p>
-              <FilterTabs options={categories} activeId={activeCategory} onChange={setSelectedCategory} ariaLabel="Filter library by category" />
-            </div>
 
             {duplicateGroups.length > 0 && (
               <div className="mt-4 rounded-md border border-border bg-surface p-3">
@@ -606,43 +627,6 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
                 </ul>
               </div>
             )}
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setShowFiltersPanel((current) => !current)}
-                aria-expanded={showFiltersPanel}
-                className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
-              >
-                <SlidersIcon width={14} height={14} />
-                Filters
-              </button>
-
-              {isAdHocOrViewActive && !activeSavedView && (
-                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
-                  Save as Smart View
-                </button>
-              )}
-              {activeSavedView && !isModifiedFromSaved && (
-                <button type="button" onClick={handleOpenSaveAsView} className="text-xs font-medium text-accent hover:underline">
-                  Save as new view
-                </button>
-              )}
-
-              <div className="ml-auto">
-                <LibrarySortSelect value={currentDefinition.sort} onChange={(sort) => setCurrentDefinition((current) => ({ ...current, sort }))} />
-              </div>
-            </div>
-
-            {showFiltersPanel && (
-              <div className="mt-3">
-                <LibraryFiltersPanel definition={currentDefinition} collections={collections} onChange={setCurrentDefinition} />
-              </div>
-            )}
-
-            <div className="mt-3">
-              <FilterChips chips={filterChips} onRemove={handleRemoveChip} onClearAll={handleClearAllFilters} />
-            </div>
 
             {activeSavedView && isModifiedFromSaved && (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-hover px-3 py-2">
@@ -678,6 +662,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
                 <LibraryItemGrid
                   items={visibleItems}
                   totalItems={items.length}
+                  viewMode={viewMode}
                   searchQuery={currentDefinition.query}
                   activeType={activeTypeTabId}
                   activeStatus={activeStatusTabId}
@@ -697,7 +682,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
             </div>
           </>
         )}
-      </main>
+      </PageContainer>
 
       <LibraryItemDialog
         state={dialogState}

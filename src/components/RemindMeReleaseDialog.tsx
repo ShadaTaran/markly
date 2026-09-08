@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import type { ReleaseReminder, ReleaseReminderTarget } from "@/types/reminder";
 import { LEAD_TIME_PRESETS } from "@/types/reminder";
 import { Dialog } from "@/components/Dialog";
+import { Button } from "@/components/Button";
 import type { CreateReminderResult, SaveResult } from "@/hooks/useReminders";
 
 interface RemindMeReleaseDialogProps {
@@ -103,21 +104,12 @@ export function RemindMeReleaseDialog({ isOpen, target, existing, onClose, onCre
       </p>
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="secondary" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="primary" onClick={handleSave} disabled={saving} className="min-w-28">
           {saving ? "Saving…" : existing ? "Save" : "Set reminder"}
-        </button>
+        </Button>
       </div>
     </Dialog>
   );

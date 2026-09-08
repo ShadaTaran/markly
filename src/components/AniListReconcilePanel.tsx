@@ -174,7 +174,7 @@ export function AniListReconcilePanel({ onClose, onApplied }: AniListReconcilePa
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="AniList Sync">
       <div className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-lg border border-border bg-surface sm:max-w-2xl sm:rounded-lg">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">AniList Sync</h2>
+          <h2 className="text-base font-semibold text-foreground">AniList Sync</h2>
           <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-surface-hover hover:text-foreground" aria-label="Close">
             Close
           </button>

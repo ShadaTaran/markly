@@ -2,9 +2,12 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { LibraryItem } from "@/types/library-item";
 import type { Reminder, ReleaseReminderTarget } from "@/types/reminder";
 import { Header } from "@/components/Header";
+import { ImportBanner } from "@/components/ImportBanner";
+import { PageContainer } from "@/components/PageContainer";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
@@ -28,6 +31,7 @@ import { resolveResumeTarget } from "@/lib/dashboard";
 import { RemindMeReleaseDialog } from "@/components/RemindMeReleaseDialog";
 import { RemindMeContinueDialog } from "@/components/RemindMeContinueDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { ClockIcon } from "@/components/icons";
 
 interface ReminderCenterViewProps {
@@ -44,6 +48,7 @@ interface ReminderCenterViewProps {
  * doc comment for why).
  */
 export function ReminderCenterView({ items: initialItems }: ReminderCenterViewProps) {
+  const router = useRouter();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const activity = useActivity(userId);
@@ -113,8 +118,9 @@ export function ReminderCenterView({ items: initialItems }: ReminderCenterViewPr
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header active="reminders" />
+      <ImportBanner />
 
-      <main className="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6 lg:px-8">
+      <PageContainer width="narrow" className="space-y-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-foreground">Reminders</h1>
         </div>
@@ -129,6 +135,13 @@ export function ReminderCenterView({ items: initialItems }: ReminderCenterViewPr
 
         {loading || !remindersReady ? (
           <DataLoadingPlaceholder label="Loading your reminders…" />
+        ) : remindersStore.reminders.length === 0 ? (
+          <EmptyState
+            icon={<ClockIcon width={22} height={22} />}
+            title="No reminders yet"
+            description="Set one from Calendar or an item’s detail page."
+            action={{ label: "Browse Calendar", onClick: () => router.push("/calendar") }}
+          />
         ) : (
           <>
             <ReminderSection
@@ -181,7 +194,7 @@ export function ReminderCenterView({ items: initialItems }: ReminderCenterViewPr
             </section>
           </>
         )}
-      </main>
+      </PageContainer>
 
       <RemindMeReleaseDialog
         isOpen={editingRelease !== null}
@@ -241,7 +254,7 @@ interface ReminderSectionProps {
 function ReminderSection({ title, emptyText, entries, now, timeZone, trackingSources, onEdit, onDismiss, onDelete, hideHeading }: ReminderSectionProps) {
   return (
     <section>
-      {!hideHeading && <h2 className="mb-2 text-sm font-semibold text-foreground">{title}</h2>}
+      {!hideHeading && <h2 className="mb-2 text-base font-semibold text-foreground">{title}</h2>}
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (

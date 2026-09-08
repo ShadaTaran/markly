@@ -11,6 +11,7 @@ import { inferReadingFormatFromCatalog } from "@/lib/metadata/catalog-item";
 import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import { parseCount, parseDecimal, parsePercent, parseRating } from "@/lib/form-number-parsing";
 import { Field, inputClass } from "@/components/FormField";
+import { Button } from "@/components/Button";
 
 /**
  * Prefill for a browser-extension-detected work with no catalog match —
@@ -814,19 +815,12 @@ export function MediaItemForm({
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="submit"
-          className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
+        </Button>
+        <Button type="submit" variant="primary">
           {initialValues ? "Save Changes" : `Add ${label}`}
-        </button>
+        </Button>
       </div>
     </form>
   );

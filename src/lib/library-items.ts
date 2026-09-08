@@ -16,6 +16,16 @@ export function getUniqueCategories(items: LibraryItem[]): string[] {
   return Array.from(new Set(items.map((item) => item.category))).sort();
 }
 
+/**
+ * Items added with no known category (e.g. Auto Tracking's "no catalog
+ * match" one-click add — see buildDetectedMediaInput) are legitimately
+ * stored with `category: ""`, never a placeholder string — filtering must
+ * keep matching against that exact empty value. Only the label shown here
+ * is display-only, so a real blank category never renders as a bare,
+ * unlabeled count.
+ */
+const UNCATEGORIZED_LABEL = "Uncategorized";
+
 export function getCategories(items: LibraryItem[]): CategoryOption[] {
   const uniqueCategories = getUniqueCategories(items);
 
@@ -28,7 +38,7 @@ export function getCategories(items: LibraryItem[]): CategoryOption[] {
     },
     ...uniqueCategories.map((category) => ({
       id: category,
-      label: category,
+      label: category.trim() === "" ? UNCATEGORIZED_LABEL : category,
       count: items.filter((item) => item.category === category).length,
     })),
   ];

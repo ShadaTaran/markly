@@ -46,7 +46,7 @@ export function SmartViewsBar({ builtInViews, customViews, allLibraryCount, acti
                 <div
                   className={cn(
                     "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors",
-                    activeViewId === view.id ? "border-foreground text-foreground" : "border-border text-muted-foreground hover:text-foreground",
+                    activeViewId === view.id ? "border-accent bg-accent/5 text-foreground" : "border-border text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <button type="button" onClick={() => onSelect(view.id)} className="flex items-center gap-1.5">
@@ -118,7 +118,7 @@ function ViewButtonRow({ entries, activeViewId, onSelect }: { entries: SmartView
               aria-current={isActive ? "true" : undefined}
               className={cn(
                 "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors",
-                isActive ? "border-foreground bg-surface-hover text-foreground" : "border-border text-muted-foreground hover:text-foreground",
+                isActive ? "border-accent bg-accent/5 text-foreground" : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
               {entry.name}

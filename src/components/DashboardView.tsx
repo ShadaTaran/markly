@@ -5,8 +5,11 @@ import Link from "next/link";
 import type { LibraryItem } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { Header } from "@/components/Header";
+import { ImportBanner } from "@/components/ImportBanner";
+import { PageContainer } from "@/components/PageContainer";
 import { useAuth } from "@/components/AuthProvider";
-import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus";
+import { DataErrorBanner } from "@/components/DataStatus";
+import { DashboardSkeleton } from "@/components/DashboardSkeleton";
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useActivity } from "@/hooks/useActivity";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
@@ -16,7 +19,8 @@ import type { ReleaseEvent } from "@/types/release-event";
 import { getActivityDetail, getActivitySourceLabel, formatRelativeTime } from "@/lib/activity-format";
 import { getCurrentlyTrackingCounts, getLibraryTypeCounts } from "@/lib/stats";
 import { isMediaItem, getItemHref } from "@/lib/item-detail";
-import { getStatusLabel } from "@/lib/tracking";
+import { getStatusLabel, getProgressInfo } from "@/lib/tracking";
+import { ProgressBar } from "@/components/ProgressBar";
 import {
   getBuiltInViewItems,
   formatDashboardProgress,
@@ -107,16 +111,41 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header active="dashboard" />
+      <ImportBanner />
 
-      <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 lg:px-8">
+      <PageContainer className="space-y-8">
         {loadError && <DataErrorBanner message={loadError} onRetry={retry} />}
 
         {loading ? (
-          <DataLoadingPlaceholder label="Loading your library…" />
+          <DashboardSkeleton />
         ) : items.length === 0 ? (
           <EmptyLibraryState />
         ) : (
           <>
+            {/* Round 6 — basic library context should be visible immediately,
+                but Continue stays the strongest, most action-oriented
+                section: this is a lightweight text strip, not a bordered
+                analytics card, and it sits above Continue rather than
+                competing with it for visual weight. Replaces the old
+                bordered "Snapshot" section that used to sit below
+                Recently Active. */}
+            <div>
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                <OverviewStat value={items.length} label="Library" />
+                <OverviewStat value={inProgressCount} label="In Progress" />
+                <OverviewStat value={completedCount} label="Completed" />
+                <OverviewStat value={favoriteCount} label="Favorites" />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {activitySummaryStore.error ? "—" : activeThisWeek} active in the last {ACTIVE_THIS_WEEK_DAYS} days
+                {typeCounts.some(({ count }) => count > 0) &&
+                  ` · ${typeCounts
+                    .filter(({ count }) => count > 0)
+                    .map(({ label, count }) => `${count} ${label}`)
+                    .join(" · ")}`}
+              </p>
+            </div>
+
             <ContinueSection
               items={continueItems}
               trackingSources={trackingSources.sources}
@@ -153,45 +182,15 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
             />
 
             <section>
-              <SectionHeading title="Activity Snapshot" />
-              <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-                <StatRow label={`Active in the last ${ACTIVE_THIS_WEEK_DAYS} days`} value={activitySummaryStore.error ? "—" : activeThisWeek} />
-              </div>
-            </section>
-
-            <section>
-              <SectionHeading title="Library Snapshot" />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-                  <dl className="space-y-1.5">
-                    <StatRow label="Total" value={items.length} />
-                    <StatRow label="In Progress" value={inProgressCount} />
-                    <StatRow label="Completed" value={completedCount} />
-                    <StatRow label="Favorites" value={favoriteCount} />
-                  </dl>
-                </div>
-                <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-                  <dl className="space-y-1.5">
-                    {typeCounts.map(({ label, count }) => (
-                      <StatRow key={label} label={label} value={count} />
-                    ))}
-                  </dl>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-border bg-surface p-4 sm:p-5">
-              <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                Recent Activity
-              </h2>
+              <SectionHeading title="Recent Activity" />
               {recentActivity.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No activity yet.</p>
               ) : (
-                <ul className="divide-y divide-border/60">
+                <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
                   {recentActivity.map(({ event, item }) => {
                     const sourceLabel = getActivitySourceLabel(event);
                     return (
-                      <li key={event.id} className="py-1.5 first:pt-0 last:pb-0">
+                      <li key={event.id} className="px-4 py-2.5">
                         <p className="text-xs text-muted-foreground">
                           {item?.title ?? "Deleted item"}
                           {sourceLabel && ` · ${sourceLabel}`}
@@ -210,7 +209,7 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
             </section>
           </>
         )}
-      </main>
+      </PageContainer>
     </div>
   );
 }
@@ -218,7 +217,7 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
 function SectionHeading({ title, viewAllHref }: { title: string; viewAllHref?: string }) {
   return (
     <div className="mb-3 flex items-baseline justify-between gap-3">
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      <h2 className="text-base font-semibold text-foreground">{title}</h2>
       {viewAllHref && (
         <Link href={viewAllHref} className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline">
           View all
@@ -228,12 +227,11 @@ function SectionHeading({ title, viewAllHref }: { title: string; viewAllHref?: s
   );
 }
 
-function StatRow({ label, value }: { label: string; value: number | string }) {
+function OverviewStat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="text-sm font-medium text-foreground">{value}</dd>
-    </div>
+    <span className="text-sm">
+      <span className="font-semibold text-foreground">{value}</span> <span className="text-muted-foreground">{label}</span>
+    </span>
   );
 }
 
@@ -317,53 +315,70 @@ function ContinueCard({
   lastActiveLabel: string | null;
 }) {
   const progressText = formatDashboardProgress(item);
+  const progressPercent = isMediaItem(item) ? getProgressInfo(item)?.percent : undefined;
   const typeLabel = ITEM_TYPE_LABELS[item.type];
   const isExternal = resumeTarget.kind === "external";
   const ctaLabel = isExternal ? "Continue" : "Open item";
+  const imageUrl = "imageUrl" in item ? item.imageUrl : undefined;
 
   return (
-    <article className="w-56 shrink-0 rounded-lg border border-border bg-surface p-3 sm:w-auto">
-      <Link href={getItemHref(item)} className="block outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-md">
-        <h3 className="truncate text-sm font-medium leading-tight text-foreground hover:underline">{item.title}</h3>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">{typeLabel}</p>
+    <article className="flex w-64 shrink-0 gap-3 rounded-lg border border-border bg-surface p-3 sm:w-auto">
+      <Link
+        href={getItemHref(item)}
+        aria-label={`View details for ${item.title}`}
+        className="flex h-20 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      >
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- user-provided cover art from arbitrary hosts; next/image's optimizer isn't a good fit for this (same convention as MediaItemCard).
+          <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <ItemTypeIcon type={item.type} width={20} height={20} className="text-muted-foreground" aria-hidden="true" />
+        )}
       </Link>
 
-      {progressText && <p className="mt-2 truncate text-xs text-foreground">{progressText}</p>}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Link href={getItemHref(item)} className="outline-none focus-visible:underline">
+          <h3 className="truncate text-sm font-medium leading-tight text-foreground hover:underline">{item.title}</h3>
+        </Link>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{typeLabel}</p>
 
-      {lastActiveLabel && (
-        <p className="mt-1 text-[11px] text-muted-foreground" title={lastActiveLabel}>
-          Last active {lastActiveLabel}
-        </p>
-      )}
-
-      <div className="mt-3">
-        {isExternal ? (
-          <a
-            href={resumeTarget.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`${ctaLabel} ${item.title}${resumeTarget.hostname ? ` on ${resumeTarget.sourceLabel ?? resumeTarget.hostname}` : ""}`}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
-            {ctaLabel}
-            <ExternalLinkIcon width={11} height={11} />
-          </a>
-        ) : (
-          <Link
-            href={resumeTarget.url}
-            aria-label={`${ctaLabel} ${item.title}`}
-            className="flex w-full items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          >
-            {ctaLabel}
-          </Link>
+        {progressText && (
+          <div className="mt-1.5">
+            <p className="truncate text-xs text-foreground">{progressText}</p>
+            {progressPercent !== undefined && <ProgressBar percent={progressPercent} className="mt-1" />}
+          </div>
         )}
-      </div>
 
-      {isExternal && (resumeTarget.sourceLabel ?? resumeTarget.hostname) && (
-        <p className="mt-1.5 truncate text-center text-[10px] text-muted-foreground/70">
-          {resumeTarget.sourceLabel ?? resumeTarget.hostname}
-        </p>
-      )}
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+          {lastActiveLabel ? (
+            <span className="truncate text-[11px] text-muted-foreground" title={lastActiveLabel}>
+              {lastActiveLabel}
+            </span>
+          ) : (
+            <span />
+          )}
+          {isExternal ? (
+            <a
+              href={resumeTarget.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${ctaLabel} ${item.title}${resumeTarget.hostname ? ` on ${resumeTarget.sourceLabel ?? resumeTarget.hostname}` : ""}`}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            >
+              {ctaLabel}
+              <ExternalLinkIcon width={10} height={10} />
+            </a>
+          ) : (
+            <Link
+              href={resumeTarget.url}
+              aria-label={`${ctaLabel} ${item.title}`}
+              className="shrink-0 text-xs font-medium text-accent hover:underline focus-visible:outline-none focus-visible:underline"
+            >
+              {ctaLabel}
+            </Link>
+          )}
+        </div>
+      </div>
     </article>
   );
 }
@@ -461,30 +476,26 @@ function RecentlyActiveSection({ items, activitySummary, now, activityError, onR
       {items.length === 0 && !activityError ? (
         <p className="text-sm text-muted-foreground">No recent activity yet.</p>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-3">
-          {items.map((item) => (
-            <CompactActivityCard key={item.id} item={item} lastActiveLabel={lastActiveLabelFor(item.id, activitySummary, now)} />
-          ))}
-        </div>
+        <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
+          {items.map((item) => {
+            const progressText = formatDashboardProgress(item);
+            const lastActiveLabel = lastActiveLabelFor(item.id, activitySummary, now);
+            return (
+              <li key={item.id}>
+                <Link href={getItemHref(item)} className="flex items-center gap-3 px-4 py-2 hover:bg-surface-hover">
+                  <ItemTypeIcon type={item.type} width={14} height={14} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-foreground">{item.title}</p>
+                    {progressText && <p className="truncate text-xs text-muted-foreground">{progressText}</p>}
+                  </div>
+                  {lastActiveLabel && <span className="shrink-0 text-xs text-muted-foreground">{lastActiveLabel}</span>}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </section>
-  );
-}
-
-function CompactActivityCard({ item, lastActiveLabel }: { item: LibraryItem; lastActiveLabel: string | null }) {
-  const progressText = formatDashboardProgress(item);
-  return (
-    <Link
-      href={getItemHref(item)}
-      className="block w-48 shrink-0 rounded-lg border border-border bg-surface p-3 transition-colors hover:border-foreground/25 sm:w-auto"
-    >
-      <div className="flex items-center gap-2">
-        <ItemTypeIcon type={item.type} width={14} height={14} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-        <h3 className="truncate text-sm font-medium text-foreground">{item.title}</h3>
-      </div>
-      {progressText && <p className="mt-1 truncate text-xs text-muted-foreground">{progressText}</p>}
-      {lastActiveLabel && <p className="mt-1 text-[11px] text-muted-foreground/80">{lastActiveLabel}</p>}
-    </Link>
   );
 }
 
@@ -499,13 +510,17 @@ interface StalledSectionProps extends ActivityDependentSectionProps {
 }
 
 function StalledSection({ items, activitySummary, now, activityError, onRetryActivity }: StalledSectionProps) {
+  // Round 4 — when there's nothing stalled, the section renders nothing at
+  // all (no heading, no "View all"). The Stalled Smart View stays reachable
+  // from Library regardless; Stage 31 Stalled semantics are unaffected —
+  // this only changes whether Dashboard shows an empty section for it.
+  if (items.length === 0 && !activityError) return null;
+
   return (
     <section>
       <SectionHeading title="Stalled" viewAllHref="/library" />
       <ActivityErrorNotice activityError={activityError} onRetryActivity={onRetryActivity} />
-      {items.length === 0 && !activityError ? (
-        <p className="text-sm text-muted-foreground">Nothing stalled.</p>
-      ) : (
+      {items.length === 0 ? null : (
         <ul className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
           {items.map((item) => {
             const label = lastActiveLabelFor(item.id, activitySummary, now);

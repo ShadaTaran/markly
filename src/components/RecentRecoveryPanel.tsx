@@ -13,6 +13,8 @@ import { loadRecoveryActions } from "@/lib/local-recovery-storage";
 import { undoRecoveryAction } from "@/lib/recovery-orchestration";
 import { formatDate } from "@/lib/item-detail";
 import { DataErrorBanner } from "@/components/DataStatus";
+import { EmptyState } from "@/components/EmptyState";
+import { ClockIcon } from "@/components/icons";
 
 /**
  * Stage 28 — "Recently changed" surface (Section 31): a short, refresh-
@@ -83,16 +85,20 @@ export function RecentRecoveryPanel() {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        Deleting or merging an item here stays undoable for 15 minutes — after that, the change is final.
-      </p>
-
       {loadFailed && <DataErrorBanner message="Unable to load recent actions." onRetry={load} />}
       {feedback && <p className="text-sm text-muted-foreground">{feedback}</p>}
 
       {actions && actions.length === 0 && !loadFailed && (
-        <p className="rounded-md border border-border bg-surface p-3 text-sm text-muted-foreground">
-          Nothing recent to undo.
+        <EmptyState
+          icon={<ClockIcon width={22} height={22} />}
+          title="No recent changes to undo"
+          description="Deleting or merging an item here stays undoable for 15 minutes — after that, the change is final."
+        />
+      )}
+
+      {actions && actions.length > 0 && (
+        <p className="text-sm text-muted-foreground">
+          Deleting or merging an item here stays undoable for 15 minutes — after that, the change is final.
         </p>
       )}
 

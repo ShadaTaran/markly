@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { Field, inputClass } from "@/components/FormField";
+import { Button } from "@/components/Button";
 
 interface AuthFormProps {
   mode: "signin" | "signup";
@@ -100,13 +101,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="w-full rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-      >
+      <Button type="submit" variant="primary" disabled={submitting} className="w-full">
         {submitting ? "Please wait…" : mode === "signup" ? "Create Account" : "Sign In"}
-      </button>
+      </Button>
 
       <p className="text-center text-sm text-muted-foreground">
         {mode === "signup" ? (
