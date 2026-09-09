@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccountMenu } from "@/components/AccountMenu";
+import { CommandPaletteTriggerButton } from "@/components/CommandPaletteTriggerButton";
 import { ArrowLeftIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,7 @@ export function SecondaryPageHeader({ maxWidthClassName }: SecondaryPageHeaderPr
           <span className="hidden sm:inline" aria-hidden="true">Back to Library</span>
         </Link>
         <div className="ml-auto flex items-center gap-2">
+          <CommandPaletteTriggerButton />
           <ThemeToggle />
           <AccountMenu />
         </div>

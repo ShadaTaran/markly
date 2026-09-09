@@ -6,6 +6,7 @@ import type { Collection, CollectionInput } from "@/types/collection";
 import type { SavedSmartView, SmartViewDefinition } from "@/types/smart-view";
 import { defaultSmartViewDefinition } from "@/types/smart-view";
 import { Header } from "@/components/Header";
+import { SearchBar } from "@/components/SearchBar";
 import { ImportBanner } from "@/components/ImportBanner";
 import { PageContainer } from "@/components/PageContainer";
 import { CollectionHeader } from "@/components/CollectionHeader";
@@ -507,12 +508,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <Header
-        active="library"
-        searchQuery={currentDefinition.query}
-        onSearchQueryChange={(value) => setCurrentDefinition((current) => ({ ...current, query: value }))}
-        onAddItem={handleOpenAddDialog}
-      />
+      <Header active="library" onAddItem={handleOpenAddDialog} />
       <ImportBanner />
 
       <PageContainer>
@@ -543,12 +539,31 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
                 items ~800px+ down the page at 375px before a single item
                 was visible, and desktop had the same four rows plus the
                 separate advanced panel stacked before content. Smart Views,
-                search (in Header), sort, and the active-filter chip summary
-                stay always visible per the round-2 brief; everything else
-                lives behind one toggle. No Stage 31 filtering capability
-                was removed — same components, same handlers, same
-                SmartViewDefinition, just grouped under one disclosure. */}
+                search, sort, and the active-filter chip summary stay always
+                visible per the round-2 brief; everything else lives behind
+                one toggle. No Stage 31 filtering capability was removed —
+                same components, same handlers, same SmartViewDefinition,
+                just grouped under one disclosure.
+
+                Stage 36 consistency pass — this search field used to live in
+                the Header itself (Library was the only page that passed
+                onSearchQueryChange to it), which put it directly beside the
+                new global Command Palette trigger: two search-shaped
+                controls in the same header slot. It's the exact same
+                SearchBar component and the exact same currentDefinition.query
+                state/handler, just moved down into Library's own content
+                toolbar where it reads as filtering *this* library rather
+                than competing with global search. Full width on mobile (its
+                own row, since it's first and flex-wrap pushes Filters/View/
+                Sort below it); a fixed width alongside them on desktop. */}
             <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className="w-full sm:w-64">
+                <SearchBar
+                  value={currentDefinition.query}
+                  onChange={(value) => setCurrentDefinition((current) => ({ ...current, query: value }))}
+                />
+              </div>
+
               <button
                 type="button"
                 onClick={() => setShowFiltersPanel((current) => !current)}

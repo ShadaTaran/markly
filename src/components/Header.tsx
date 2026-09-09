@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { SearchBar } from "@/components/SearchBar";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccountMenu } from "@/components/AccountMenu";
 import { ReminderBell } from "@/components/ReminderBell";
+import { CommandPaletteTriggerButton } from "@/components/CommandPaletteTriggerButton";
 import { PlusIcon } from "@/components/icons";
 import { Button } from "@/components/Button";
 import { Logo } from "@/components/Logo";
@@ -10,9 +10,14 @@ import { cn } from "@/lib/utils";
 
 interface HeaderProps {
   active: "dashboard" | "library" | "calendar" | "reminders";
-  /** Only the Library view searches/adds items — omit these to get a bare header. */
-  searchQuery?: string;
-  onSearchQueryChange?: (value: string) => void;
+  /**
+   * Only Library shows an "Add Item" button in the Header (opens the
+   * canonical LibraryItemDialog). Every page's Header exposes exactly one
+   * search affordance — the global Command Palette trigger — never a
+   * page-local search field; Library's own filter search lives in its own
+   * content toolbar instead (see LibraryView.tsx, Stage 36 consistency
+   * pass), so it doesn't compete with the palette for the same slot.
+   */
   onAddItem?: () => void;
 }
 
@@ -22,7 +27,7 @@ const NAV_ITEMS = [
   { id: "calendar", label: "Calendar", href: "/calendar" },
 ] as const;
 
-export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: HeaderProps) {
+export function Header({ active, onAddItem }: HeaderProps) {
   return (
     <header className="border-b border-border">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-4 sm:px-6 lg:px-8">
@@ -49,13 +54,8 @@ export function Header({ active, searchQuery, onSearchQueryChange, onAddItem }: 
           ))}
         </nav>
 
-        {onSearchQueryChange && (
-          <div className="order-3 w-full sm:order-none sm:w-auto sm:max-w-md sm:flex-1">
-            <SearchBar value={searchQuery ?? ""} onChange={onSearchQueryChange} />
-          </div>
-        )}
-
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <CommandPaletteTriggerButton />
           <ReminderBell />
           <ThemeToggle />
           <AccountMenu />
