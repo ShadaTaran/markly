@@ -35,6 +35,8 @@ import { useActivity } from "@/hooks/useActivity";
 import { useSmartViews } from "@/hooks/useSmartViews";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { useReminders } from "@/hooks/useReminders";
+import { useLocalImport } from "@/hooks/useLocalImport";
+import { useLibraryActivation } from "@/hooks/useLibraryActivation";
 import { getValidItemIds } from "@/lib/collections";
 import { getCategories, getUniqueCategories, type TypeFilterValue } from "@/lib/library-items";
 import {
@@ -84,6 +86,7 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
   const smartViewsStore = useSmartViews(userId);
   const activitySummaryStore = useActivitySummary(userId, activity.events, activity.cloudWriteVersion);
   const remindersStore = useReminders(userId);
+  const localImport = useLocalImport(userId);
 
   // See DashboardView for why cloud mode needs an explicit loading state
   // that local mode doesn't.
@@ -91,6 +94,13 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
     Boolean(userId) &&
     (!library.isHydrated || !collectionsStore.isHydrated || !activity.isHydrated || !smartViewsStore.isHydrated || !activitySummaryStore.isHydrated);
   const loadError = library.error ?? collectionsStore.error ?? activity.error ?? smartViewsStore.error ?? activitySummaryStore.error;
+
+  // Stage 35 (global consistency fix) — the same shared, page-independent
+  // activation tracker DashboardView uses. A user can activate Markly for
+  // the first time from Library's own empty-state CTA instead of
+  // Dashboard's, and this records it identically either way (including
+  // Auto Tracking nudge eligibility) — see hooks/useLibraryActivation.ts.
+  const onboarding = useLibraryActivation({ loading, itemCount: items.length });
 
   function retryLoad() {
     library.reload();
@@ -669,6 +679,11 @@ export function LibraryView({ items: initialItems }: LibraryViewProps) {
                   activeCategory={activeCategory}
                   activeTag={activeTag}
                   collectionSize={activeCollection ? getValidItemIds(activeCollection, rawCollectionScope).length : undefined}
+                  onAddItem={handleOpenAddDialog}
+                  showAniListPath={Boolean(user)}
+                  showExtensionPath={Boolean(user)}
+                  pendingLocalImport={localImport.hasPendingImport}
+                  hasEverHadLibraryItems={onboarding.hasEverHadLibraryItems}
                   onToggleFavorite={library.toggleFavorite}
                   onEdit={handleOpenEditDialog}
                   onAddToCollection={handleOpenMembershipDialog}

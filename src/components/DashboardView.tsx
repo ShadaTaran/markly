@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { LibraryItem } from "@/types/library-item";
+import type { LibraryItem, MediaItemInput, SupportedItemType, WebsiteItemInput } from "@/types/library-item";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { Header } from "@/components/Header";
 import { ImportBanner } from "@/components/ImportBanner";
 import { PageContainer } from "@/components/PageContainer";
+import { Button } from "@/components/Button";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner } from "@/components/DataStatus";
 import { DashboardSkeleton } from "@/components/DashboardSkeleton";
@@ -15,11 +16,15 @@ import { useActivity } from "@/hooks/useActivity";
 import { useActivitySummary } from "@/hooks/useActivitySummary";
 import { useTrackingSources } from "@/hooks/useTrackingSources";
 import { useReleaseCalendar } from "@/hooks/useReleaseCalendar";
+import { useLocalImport } from "@/hooks/useLocalImport";
+import { useLibraryActivation } from "@/hooks/useLibraryActivation";
 import type { ReleaseEvent } from "@/types/release-event";
 import { getActivityDetail, getActivitySourceLabel, formatRelativeTime } from "@/lib/activity-format";
 import { getCurrentlyTrackingCounts, getLibraryTypeCounts } from "@/lib/stats";
 import { isMediaItem, getItemHref } from "@/lib/item-detail";
 import { getStatusLabel, getProgressInfo } from "@/lib/tracking";
+import { getUniqueCategories } from "@/lib/library-items";
+import { resolveActivationState, shouldShowAutoTrackingNudge } from "@/lib/onboarding";
 import { ProgressBar } from "@/components/ProgressBar";
 import {
   getBuiltInViewItems,
@@ -30,7 +35,9 @@ import {
 import { DEFAULT_CALENDAR_RANGE_DAYS, formatReleaseDayLabel, formatReleaseEventTime, getLocalDayKey, getLocalTimeZone } from "@/lib/release-calendar";
 import { CONTINUE_VIEW_ID, RECENTLY_ACTIVE_VIEW_ID, STALLED_VIEW_ID, type SmartViewContext } from "@/lib/smart-views";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
-import { ExternalLinkIcon, StarIcon } from "@/components/icons";
+import { ExternalLinkIcon, PlusIcon, StarIcon } from "@/components/icons";
+import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
+import type { MetadataDetails } from "@/lib/metadata/types";
 
 interface DashboardViewProps {
   items: LibraryItem[];
@@ -67,6 +74,98 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
     activity.reload();
     activitySummaryStore.reload();
     trackingSources.reload();
+  }
+
+  // Stage 35 — first-run/activation. See lib/onboarding.ts for why this is
+  // a pure function rather than inline conditionals: it's the one place
+  // that decides loading vs. error vs. "has local data waiting to import"
+  // vs. genuinely-empty (new OR returning) vs. populated, so every branch
+  // below reads it instead of re-deriving it. `!onboarding.isHydrated` is
+  // folded into the same loading gate the library/activity stores use —
+  // without it, a returning user whose library happens to be empty right
+  // now could theoretically see one flash of the first-run hero before
+  // `hasEverHadLibraryItems` finishes reading from storage.
+  //
+  // useLibraryActivation (not useOnboarding directly) is what actually
+  // records hasEverHadLibraryItems/autoTrackingNudgeEligible — it's the
+  // one shared, page-independent tracker also used by LibraryView, so
+  // activating via either page's empty-state CTA is recorded identically.
+  const localImport = useLocalImport(userId);
+  const onboarding = useLibraryActivation({ loading, itemCount: items.length });
+  const activationLoading = loading || !onboarding.isHydrated;
+  const activationState = resolveActivationState({
+    loading: activationLoading,
+    loadError: Boolean(loadError),
+    itemCount: items.length,
+    pendingLocalImport: localImport.hasPendingImport,
+    hasEverHadLibraryItems: onboarding.hasEverHadLibraryItems,
+  });
+
+  const showAutoTrackingNudge = shouldShowAutoTrackingNudge({
+    itemCount: items.length,
+    eligible: onboarding.autoTrackingNudgeEligible,
+    dismissed: onboarding.autoTrackingNudgeDismissed,
+    isSignedIn: Boolean(user),
+    extensionAlreadyConnected: trackingSources.sources.length > 0,
+  });
+
+  // Stage 35 — "Add your first item" reuses the exact same LibraryItemDialog
+  // state machine and useLibraryItems mutations LibraryView's own Add Item
+  // flow uses (also mirrored by ItemDetailView's edit flow and
+  // TrackingSettingsPanel's add-or-link flow) — never a second
+  // implementation, just one more caller of the same shared dialog.
+  const [dialogState, setDialogState] = useState<DialogState>(null);
+  const existingCategories = useMemo(() => getUniqueCategories(items), [items]);
+
+  function handleOpenAddDialog() {
+    setDialogState({ step: "pickType" });
+  }
+
+  function handleSelectType(itemType: SupportedItemType) {
+    if (itemType === "website") {
+      setDialogState({ step: "form", mode: "add", itemType });
+    } else {
+      setDialogState({ step: "search", mode: "add", itemType });
+    }
+  }
+
+  function handleSelectSearchResult(details: MetadataDetails) {
+    if (dialogState?.step !== "search") return;
+    setDialogState({ step: "form", mode: "add", itemType: dialogState.itemType, prefill: details });
+  }
+
+  function handleManualEntry() {
+    if (dialogState?.step !== "search") return;
+    setDialogState({ step: "form", mode: "add", itemType: dialogState.itemType });
+  }
+
+  function handleBackToPicker() {
+    setDialogState({ step: "pickType" });
+  }
+
+  function handleBackToSearch() {
+    if (dialogState?.step !== "form" || dialogState.mode !== "add" || dialogState.itemType === "website") return;
+    setDialogState({ step: "search", mode: "add", itemType: dialogState.itemType });
+  }
+
+  function handleToggleFullForm() {
+    if (dialogState?.step !== "form") return;
+    setDialogState({ ...dialogState, showFullForm: true });
+  }
+
+  function handleCloseDialog() {
+    setDialogState(null);
+  }
+
+  function handleSubmitWebsite(values: WebsiteItemInput) {
+    library.addWebsite(values);
+    setDialogState(null);
+  }
+
+  function handleSubmitMedia(values: MediaItemInput) {
+    if (dialogState?.step !== "form" || dialogState.itemType === "website") return;
+    library.addMedia(dialogState.itemType, values);
+    setDialogState(null);
   }
 
   const smartViewContext: SmartViewContext = useMemo(
@@ -116,12 +215,20 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
       <PageContainer className="space-y-8">
         {loadError && <DataErrorBanner message={loadError} onRetry={retry} />}
 
-        {loading ? (
+        {activationState === "loading" ? (
           <DashboardSkeleton />
-        ) : items.length === 0 ? (
-          <EmptyLibraryState />
-        ) : (
+        ) : activationState === "onboarding" ? (
+          <FirstRunDashboard onAddItem={handleOpenAddDialog} showAniListPath={Boolean(user)} showExtensionPath={Boolean(user)} />
+        ) : activationState === "empty-returning" ? (
+          <ReturningEmptyDashboardNotice onAddItem={handleOpenAddDialog} />
+        ) : activationState === "import-pending" ? (
+          <ImportPendingDashboardNotice />
+        ) : activationState === "error" ? null : (
           <>
+            {showAutoTrackingNudge && (
+              <AutoTrackingNudge onDismiss={onboarding.dismissAutoTrackingNudge} />
+            )}
+
             {/* Round 6 — basic library context should be visible immediately,
                 but Continue stays the strongest, most action-oriented
                 section: this is a lightweight text strip, not a bordered
@@ -210,6 +317,20 @@ export function DashboardView({ items: initialItems }: DashboardViewProps) {
           </>
         )}
       </PageContainer>
+
+      <LibraryItemDialog
+        state={dialogState}
+        existingCategories={existingCategories}
+        onSelectType={handleSelectType}
+        onSelectSearchResult={handleSelectSearchResult}
+        onManualEntry={handleManualEntry}
+        onBackToPicker={handleBackToPicker}
+        onBackToSearch={handleBackToSearch}
+        onToggleFullForm={handleToggleFullForm}
+        onClose={handleCloseDialog}
+        onSubmitWebsite={handleSubmitWebsite}
+        onSubmitMedia={handleSubmitMedia}
+      />
     </div>
   );
 }
@@ -235,16 +356,133 @@ function OverviewStat({ label, value }: { label: string; value: number | string 
   );
 }
 
-function EmptyLibraryState() {
+/**
+ * Stage 35 — the one intentional first-run experience for a genuinely
+ * empty library: a value statement, one primary action (which invokes the
+ * exact same LibraryItemDialog every other Add Item entry point uses),
+ * and — only when actually usable in this session (both AniList import
+ * and the extension pairing flow require a signed-in cloud account, see
+ * ConnectionsPanel/TrackingSettingsPanel) — two clearly-subordinate
+ * secondary paths into the existing Settings flows. No illustration, no
+ * marketing hero, no stacked empty Continue/Upcoming/Recently Active
+ * sections underneath it.
+ */
+function FirstRunDashboard({
+  onAddItem,
+  showAniListPath,
+  showExtensionPath,
+}: {
+  onAddItem: () => void;
+  showAniListPath: boolean;
+  showExtensionPath: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-4 rounded-lg border border-border bg-surface px-6 py-16 text-center">
+      <div>
+        <h1 className="text-lg font-semibold text-foreground">Never lose your place again.</h1>
+        <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+          Keep everything you read, watch, play, and browse in one library — and pick up where you left off.
+        </p>
+      </div>
+
+      <Button variant="primary" onClick={onAddItem}>
+        <PlusIcon width={16} height={16} />
+        Add your first item
+      </Button>
+
+      {(showAniListPath || showExtensionPath) && (
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs">
+          {showAniListPath && (
+            <Link
+              href="/settings/connections"
+              className="font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none"
+            >
+              Import from AniList
+            </Link>
+          )}
+          {showExtensionPath && (
+            <Link
+              href="/settings/tracking"
+              className="font-medium text-muted-foreground hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none"
+            >
+              Connect browser extension
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Stage 35 (final audit) — shown instead of FirstRunDashboard whenever
+ * this browser has seen this library non-empty before (see
+ * hasEverHadLibraryItems) but it's genuinely empty right now — a returning
+ * user who deleted everything is not a new user, so this deliberately
+ * skips the "Never lose your place again" value statement and the
+ * AniList/extension secondary paths (they've already been introduced to
+ * those); it's just a quiet, useful way back in.
+ */
+function ReturningEmptyDashboardNotice({ onAddItem }: { onAddItem: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-surface py-16 text-center">
       <p className="text-sm text-muted-foreground">Your library is empty.</p>
-      <Link
-        href="/library"
-        className="rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85"
-      >
-        Add your first item
-      </Link>
+      <Button variant="secondary" onClick={onAddItem}>
+        <PlusIcon width={14} height={14} />
+        Add an item
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Stage 35 — shown instead of FirstRunDashboard whenever this device has
+ * local-only items not yet imported (see useLocalImport/ImportBanner,
+ * rendered independently above this). Deliberately has no "Add your first
+ * item" CTA of its own: encouraging a brand-new item while real existing
+ * data is waiting to import risks the user creating an unintentional
+ * duplicate instead of just importing what they already have.
+ */
+function ImportPendingDashboardNotice() {
+  return (
+    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-border bg-surface py-16 text-center">
+      <p className="text-sm font-medium text-foreground">Your items are ready to import</p>
+      <p className="max-w-xs text-sm text-muted-foreground">
+        Use the notice above to bring them into your account, or add something new from the Library page.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Stage 35 (final audit) — the "explain auto tracking at the right
+ * moment" nudge: eligibility is keyed on autoTrackingNudgeEligible (a
+ * one-time "you just activated Markly" flag — see lib/onboarding.ts), not
+ * a raw item count, so a returning user can never be shown this again
+ * merely because their library happens to be at one item. Never shown to
+ * a signed-out session (extension pairing is cloud-only — the CTA would
+ * be a dead end) or once a tracking source already exists for this
+ * account (the extension is clearly already in use). Dismissible, and
+ * never itself requesting any permission or starting any tracking — it
+ * only links to the existing canonical Settings > Auto Tracking flow,
+ * which owns the real pairing step.
+ */
+function AutoTrackingNudge({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+      <p className="text-sm text-foreground">Markly can remember progress automatically on supported sites.</p>
+      <div className="flex shrink-0 items-center gap-3 text-xs font-medium">
+        <Link href="/settings/tracking" className="text-accent hover:underline focus-visible:underline focus-visible:outline-none">
+          Connect extension
+        </Link>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:underline focus-visible:outline-none"
+        >
+          Not now
+        </button>
+      </div>
     </div>
   );
 }

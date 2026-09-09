@@ -296,14 +296,29 @@ function EventRow({
   );
 }
 
+/**
+ * Stage 35 — cause A of Calendar being empty: nothing in the library is
+ * eligible for release scheduling at all, as opposed to EmptyWindowState's
+ * cause B (eligible items exist, just nothing in the selected day range).
+ * A brand-new user seeing only "Nothing upcoming yet" here had no route
+ * forward; this now says why and offers one (existing Library navigation
+ * — never a claim that every media type has calendar support, since only
+ * AniList-linked anime currently does).
+ */
 function NoEligibleSourcesState() {
   return (
     <div className="rounded-lg border border-border bg-surface p-6 text-center">
-      <p className="text-sm text-muted-foreground">Nothing upcoming yet.</p>
-      <p className="mx-auto mt-1.5 max-w-sm text-xs text-muted-foreground/80">
+      <p className="text-sm font-medium text-foreground">No upcoming releases yet</p>
+      <p className="mx-auto mt-1.5 max-w-sm text-xs text-muted-foreground">
         Upcoming schedules appear when Markly has reliable release information for a Library item — currently that means
         anime linked to an AniList catalog match.
       </p>
+      <Link
+        href="/library"
+        className="mt-3 inline-block text-xs font-medium text-accent hover:underline focus-visible:underline focus-visible:outline-none"
+      >
+        Browse Library
+      </Link>
     </div>
   );
 }
