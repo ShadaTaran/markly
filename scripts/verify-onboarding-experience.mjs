@@ -371,10 +371,11 @@ check("P8: Add Item is still reused everywhere, not reimplemented", () => {
   }
 });
 
-check("P9: no new migration exists — the latest deployed migration is still the highest-numbered file", () => {
+check("P9: Stage 35 itself created no migration — 0016 was still the latest migration at the time of this stage's own work (Stage 37 later added 0017 legitimately; this snapshot is bumped forward each time a later stage adds one, same convention as every other stage's own version of this check)", () => {
   const files = readdirSync("supabase/migrations").filter((name) => name.endsWith(".sql")).sort();
+  assert.ok(files.some((name) => name.startsWith("0016_")), "expected 0016_stage34_reminders.sql to still exist");
   const highest = files[files.length - 1];
-  assert.ok(highest.startsWith("0016_"), `expected 0016_stage34_reminders.sql to still be the latest migration, found ${highest}`);
+  assert.ok(highest.startsWith("0017_"), `expected 0017_stage37_web_push.sql to be the latest migration, found ${highest}`);
 });
 
 check("P10: new Stage 35 secondary/onboarding links use Markly's existing focus-visible treatment, not just the browser default", () => {

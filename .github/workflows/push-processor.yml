@@ -1,0 +1,70 @@
+name: Markly Push Reminder Processor
+
+# Stage 37 — invokes the production due-reminder processor on a schedule.
+# This workflow does exactly one thing: a single authenticated POST to the
+# already-deployed processor endpoint. It never checks out the repository,
+# never installs dependencies, and never touches application code — the
+# endpoint itself owns all reminder/delivery logic (leases, backoff,
+# idempotency, the 24h catch-up window), so this workflow only needs to
+# show up "close enough" to every 5 minutes, not guarantee it.
+#
+# NOT YET ACTIVE: this file exists locally for review only. It has not been
+# committed, and MARKLY_PUSH_PROCESSOR_URL / PUSH_CRON_SECRET have not been
+# configured as repository secrets yet.
+
+on:
+  schedule:
+    # Every 5 minutes, offset from :00/:05 boundaries (2, 7, 12, ... 57) to
+    # avoid landing on the exact minute most scheduled workflows across
+    # GitHub pile onto, which is when GitHub's own scheduler queue is most
+    # congested and a tick is most likely to be delayed or dropped.
+    - cron: "2-57/5 * * * *"
+  workflow_dispatch: {}
+
+# No step here ever calls the GitHub API (no checkout, no PR/issue
+# interaction), so the auto-issued GITHUB_TOKEN needs no scopes at all.
+permissions: {}
+
+concurrency:
+  group: markly-push-processor
+  # A scheduler tick that's still running when the next one fires should
+  # never be cancelled mid-request — the processor's own database leases
+  # already make overlapping runs safe, so this only prevents pileup, not
+  # correctness.
+  cancel-in-progress: false
+
+jobs:
+  process-due-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Invoke production due-reminder processor
+        env:
+          MARKLY_PUSH_PROCESSOR_URL: ${{ secrets.MARKLY_PUSH_PROCESSOR_URL }}
+          PUSH_CRON_SECRET: ${{ secrets.PUSH_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          http_status=$(curl \
+            --silent \
+            --show-error \
+            --connect-timeout 10 \
+            --max-time 120 \
+            --request POST \
+            --header "Authorization: Bearer ${PUSH_CRON_SECRET}" \
+            --output /tmp/process-due-response.json \
+            --write-out '%{http_code}' \
+            "${MARKLY_PUSH_PROCESSOR_URL}")
+
+          # The route's response body is always one of a small set of
+          # sanitized shapes (status + counts, or a generic {"error": "..."}
+          # string) — it can never contain a subscription endpoint, key
+          # material, or any secret. Safe to print on both success and
+          # failure paths.
+          echo "Processor responded with HTTP ${http_status}"
+          cat /tmp/process-due-response.json
+
+          if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+            echo "::error::Processor returned a non-2xx response (HTTP ${http_status})"
+            exit 1
+          fi

@@ -188,6 +188,7 @@ const NAVIGATION_COMMANDS: readonly PaletteNavigationResult[] = [
   { kind: "navigation", id: "nav.reminders", label: "Reminders", href: "/reminders" },
   { kind: "navigation", id: "nav.settings.connections", label: "Settings · Connections", href: "/settings/connections" },
   { kind: "navigation", id: "nav.settings.tracking", label: "Settings · Auto Tracking", href: "/settings/tracking" },
+  { kind: "navigation", id: "nav.settings.notifications", label: "Settings · Notifications", href: "/settings/notifications" },
   { kind: "navigation", id: "nav.settings.recovery", label: "Settings · Recently Changed", href: "/settings/recovery" },
   { kind: "navigation", id: "nav.settings.backup", label: "Settings · Data & Backup", href: "/settings/backup" },
 ];
