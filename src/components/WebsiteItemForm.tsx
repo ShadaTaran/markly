@@ -8,6 +8,9 @@ import { Button } from "@/components/Button";
 
 interface WebsiteItemFormProps {
   initialValues?: WebsiteItem;
+  /** Add-mode-only prefill (e.g. from Stage 39's Share to Markly capture) — ignored once `initialValues` is set, since editing an existing item always shows that item's own url/title. */
+  initialUrl?: string;
+  initialTitle?: string;
   existingCategories: string[];
   onSubmit: (values: WebsiteItemInput) => void;
   onCancel: () => void;
@@ -23,10 +26,10 @@ interface FormState {
 
 type FormErrors = Partial<Record<"title" | "url" | "category", string>>;
 
-function toFormState(item?: WebsiteItem): FormState {
+function toFormState(item?: WebsiteItem, initialUrl?: string, initialTitle?: string): FormState {
   return {
-    title: item?.title ?? "",
-    url: item?.url ?? "",
+    title: item?.title ?? initialTitle ?? "",
+    url: item?.url ?? initialUrl ?? "",
     description: item?.description ?? "",
     category: item?.category ?? "",
     tags: item?.tags.join(", ") ?? "",
@@ -81,11 +84,13 @@ function Field({
 
 export function WebsiteItemForm({
   initialValues,
+  initialUrl,
+  initialTitle,
   existingCategories,
   onSubmit,
   onCancel,
 }: WebsiteItemFormProps) {
-  const [values, setValues] = useState<FormState>(() => toFormState(initialValues));
+  const [values, setValues] = useState<FormState>(() => toFormState(initialValues, initialUrl, initialTitle));
   const [errors, setErrors] = useState<FormErrors>({});
   const datalistId = useId();
 

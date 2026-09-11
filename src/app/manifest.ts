@@ -32,6 +32,29 @@ import type { MetadataRoute } from "next";
  * the added surface for this pass (Stage 38 §28). No `prefer_related_
  * applications` field — its absence already satisfies the installability
  * requirement that it be absent or false.
+ *
+ * Stage 39 — `share_target` deliberately uses GET, not POST: Markly only
+ * ever receives a small url/title/text payload (never files), GET needs no
+ * multipart/redirect-lifecycle handling, survives a refresh safely, and is
+ * trivially testable as a plain deep link. `action` points at `/share`,
+ * same-origin, and `params` map 1:1 onto exactly the fields `/share` already
+ * reads from its query string — no `files` entry (Stage 39 explicitly does
+ * not accept shared files).
+ *
+ * Privacy tradeoff of GET (Stage 39 correction — stated precisely, not
+ * overclaimed): the shared title/text/url travel as query parameters, so
+ * they (a) appear in this browser's own history/address-bar state for this
+ * one navigation, and (b) are necessarily present in the request URL that
+ * passes through the hosting infrastructure on its way to this route.
+ * Markly's own application code does not explicitly log, persist, or send
+ * that raw query string anywhere before the user explicitly saves (see
+ * ShareCaptureView's own doc comment) — but hosting/platform-level request
+ * logging is outside this codebase's control and may observe request URLs
+ * according to the provider's own behavior/configuration. This is an
+ * accurate description of a real, accepted tradeoff, not a privacy
+ * guarantee this file can make on the hosting layer's behalf. Switching to
+ * POST purely to avoid this was considered and rejected for this pass —
+ * see PART B of the Stage 39 correction report for the full reasoning.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -49,5 +72,14 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
       { src: "/icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
+    share_target: {
+      action: "/share",
+      method: "GET",
+      params: {
+        title: "title",
+        text: "text",
+        url: "url",
+      },
+    },
   };
 }

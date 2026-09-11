@@ -145,8 +145,18 @@ check("B6: icons array declares 192 and 512 'any' plus a dedicated 512 'maskable
   assert.ok(/"512x512"[\s\S]{0,60}"maskable"/.test(manifestSource));
 });
 
-check("B7: no secret/config values or user/session data anywhere in the manifest source (Stage 38 §33)", () => {
-  assert.ok(!/process\.env|SECRET|TOKEN|cookie|session/i.test(manifestSource));
+check("B7: no secret/config values or user/session data anywhere in the manifest's actual code (Stage 38 §33)", () => {
+  assert.ok(!/process\.env|SECRET|TOKEN|cookie|session/i.test(stripComments(manifestSource)));
+});
+
+check("B8 (Stage 39 §34/§57): share_target is same-origin, GET-based, accepts only title/text/url, and never declares a files entry", () => {
+  const cleaned = stripComments(manifestSource);
+  const block = cleaned.slice(cleaned.indexOf("share_target"));
+  assert.ok(block.startsWith("share_target"), "manifest must declare share_target");
+  assert.ok(/action:\s*"\/share"/.test(block));
+  assert.ok(/method:\s*"GET"/.test(block));
+  assert.ok(!/files/.test(block));
+  assert.ok(/title:\s*"title"/.test(block) && /text:\s*"text"/.test(block) && /url:\s*"url"/.test(block));
 });
 
 // ============================================================

@@ -393,7 +393,7 @@ export function useLibraryItems(
     ]);
   }
 
-  function addWebsite(values: WebsiteItemInput) {
+  function addWebsite(values: WebsiteItemInput): WebsiteItem {
     const normalized = { ...values, category: normalizeCategory(values.category, getUniqueCategories(items)) };
     const newItem: WebsiteItem = {
       id: generateId(),
@@ -405,6 +405,7 @@ export function useLibraryItems(
     setItems((current) => [newItem, ...current]);
     onActivity?.({ type: "item_added", itemId: newItem.id });
     persistUpsert(newItem);
+    return newItem;
   }
 
   function updateWebsite(existing: WebsiteItem, values: WebsiteItemInput) {
