@@ -191,6 +191,7 @@ const NAVIGATION_COMMANDS: readonly PaletteNavigationResult[] = [
   { kind: "navigation", id: "nav.settings.notifications", label: "Settings · Notifications", href: "/settings/notifications" },
   { kind: "navigation", id: "nav.settings.recovery", label: "Settings · Recently Changed", href: "/settings/recovery" },
   { kind: "navigation", id: "nav.settings.backup", label: "Settings · Data & Backup", href: "/settings/backup" },
+  { kind: "navigation", id: "nav.settings.app", label: "Settings · App", href: "/settings/app" },
 ];
 
 /** A fixed, known-safe allowlist — never built from searchable data, so a Library item's title/tags/category can never be interpreted as a route (Stage 36 §48). */

@@ -379,6 +379,7 @@ const NAVIGATION_COMMANDS = [
   { kind: "navigation", id: "nav.settings.notifications", label: "Settings · Notifications", href: "/settings/notifications" },
   { kind: "navigation", id: "nav.settings.recovery", label: "Settings · Recently Changed", href: "/settings/recovery" },
   { kind: "navigation", id: "nav.settings.backup", label: "Settings · Data & Backup", href: "/settings/backup" },
+  { kind: "navigation", id: "nav.settings.app", label: "Settings · App", href: "/settings/app" },
 ];
 const ADD_ITEM_ACTION = { kind: "action", id: "action.add-item", label: "Add Item" };
 
