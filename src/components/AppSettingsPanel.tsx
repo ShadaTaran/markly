@@ -49,6 +49,7 @@ export function AppSettingsPanel() {
         <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
           <li>Installing doesn&rsquo;t turn on notifications by itself — that&rsquo;s a separate step in Settings → Notifications.</li>
           <li>Installing Markly can also enable browser notifications on supported iPhone and iPad versions, once notifications are turned on there too.</li>
+          <li>On supported devices, once Markly is installed you can share links directly to it from your browser or other apps.</li>
         </ul>
       </div>
     </div>

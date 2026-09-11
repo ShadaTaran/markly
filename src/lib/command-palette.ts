@@ -186,6 +186,7 @@ const NAVIGATION_COMMANDS: readonly PaletteNavigationResult[] = [
   { kind: "navigation", id: "nav.library", label: "Library", href: "/library" },
   { kind: "navigation", id: "nav.calendar", label: "Calendar", href: "/calendar" },
   { kind: "navigation", id: "nav.reminders", label: "Reminders", href: "/reminders" },
+  { kind: "navigation", id: "nav.share", label: "Capture URL", href: "/share" },
   { kind: "navigation", id: "nav.settings.connections", label: "Settings · Connections", href: "/settings/connections" },
   { kind: "navigation", id: "nav.settings.tracking", label: "Settings · Auto Tracking", href: "/settings/tracking" },
   { kind: "navigation", id: "nav.settings.notifications", label: "Settings · Notifications", href: "/settings/notifications" },
