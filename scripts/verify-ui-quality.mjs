@@ -279,8 +279,14 @@ check("F: no new UI/animation/icon library dependency was added", () => {
   for (const name of forbidden) {
     assert.ok(!(name in allDeps), `unexpected new dependency: ${name}`);
   }
-  const knownDeps = ["@supabase/ssr", "@supabase/supabase-js", "next", "react", "react-dom", "server-only"];
-  const knownDevDeps = ["@tailwindcss/postcss", "@types/chrome", "@types/node", "@types/react", "@types/react-dom", "esbuild", "eslint", "eslint-config-next", "tailwindcss", "typescript"];
+  // Stage 37 added `web-push` (server-side Web Push transport — see
+  // lib/push/transport.ts) and its `@types/web-push` counterpart — neither
+  // is a UI/animation/icon library, which is what this check actually
+  // guards against (see the `forbidden` list above); the snapshot below is
+  // updated to match, the same way it would be for any other legitimate
+  // new dependency a later stage deliberately adds.
+  const knownDeps = ["@supabase/ssr", "@supabase/supabase-js", "next", "react", "react-dom", "server-only", "web-push"];
+  const knownDevDeps = ["@tailwindcss/postcss", "@types/chrome", "@types/node", "@types/react", "@types/react-dom", "@types/web-push", "esbuild", "eslint", "eslint-config-next", "tailwindcss", "typescript"];
   for (const name of Object.keys(pkg.dependencies ?? {})) {
     assert.ok(knownDeps.includes(name), `unexpected new runtime dependency: ${name}`);
   }

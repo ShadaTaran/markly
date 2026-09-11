@@ -376,6 +376,7 @@ const NAVIGATION_COMMANDS = [
   { kind: "navigation", id: "nav.reminders", label: "Reminders", href: "/reminders" },
   { kind: "navigation", id: "nav.settings.connections", label: "Settings · Connections", href: "/settings/connections" },
   { kind: "navigation", id: "nav.settings.tracking", label: "Settings · Auto Tracking", href: "/settings/tracking" },
+  { kind: "navigation", id: "nav.settings.notifications", label: "Settings · Notifications", href: "/settings/notifications" },
   { kind: "navigation", id: "nav.settings.recovery", label: "Settings · Recently Changed", href: "/settings/recovery" },
   { kind: "navigation", id: "nav.settings.backup", label: "Settings · Data & Backup", href: "/settings/backup" },
 ];
@@ -570,10 +571,11 @@ check("J7: no new dependency was added for this stage — no existing fuzzy-sear
   for (const name of forbidden) assert.ok(!(name in allDeps), `unexpected new search/command-menu dependency: ${name}`);
 });
 
-check("J8: no migration was created for this stage — 0001-0016 remain the complete, untouched, highest-numbered set", () => {
+check("J8: Stage 36 itself created no migration — 0016 was still the latest migration at the time of this stage's own work (Stage 37 later added 0017 legitimately; this snapshot is bumped forward each time a later stage adds one, same convention as every other stage's own version of this check)", () => {
   const files = readdirSync("supabase/migrations").filter((name) => name.endsWith(".sql")).sort();
+  assert.ok(files.some((name) => name.startsWith("0016_")), "expected 0016_stage34_reminders.sql to still exist");
   const highest = files[files.length - 1];
-  assert.ok(highest.startsWith("0016_"), `expected 0016_stage34_reminders.sql to still be the latest migration, found ${highest}`);
+  assert.ok(highest.startsWith("0017_"), `expected 0017_stage37_web_push.sql to be the latest migration, found ${highest}`);
 });
 
 // ============================================================

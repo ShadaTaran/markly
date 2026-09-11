@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { bestEffortDisablePushOnLogout } from "@/lib/push/logout-cleanup";
 
 interface AuthContextValue {
   user: User | null;
@@ -48,6 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     if (!supabase) return;
+    // Stage 37 §15 — best-effort; never blocks sign-out (see the helper's
+    // own doc comment for the full privacy reasoning).
+    await bestEffortDisablePushOnLogout(supabase);
     await supabase.auth.signOut();
   }
 

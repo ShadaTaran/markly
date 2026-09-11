@@ -13,6 +13,7 @@ import { DataErrorBanner, DataLoadingPlaceholder } from "@/components/DataStatus
 import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useActivity } from "@/hooks/useActivity";
 import { useReminders } from "@/hooks/useReminders";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useReleaseCalendar } from "@/hooks/useReleaseCalendar";
 import { useTrackingSources } from "@/hooks/useTrackingSources";
 import { useNow } from "@/hooks/useNow";
@@ -56,6 +57,13 @@ export function ReminderCenterView({ items: initialItems }: ReminderCenterViewPr
   const { items } = library;
   const remindersStore = useReminders(userId);
   const trackingSources = useTrackingSources(userId);
+  // Stage 37 — a restrained, read-only status link (never a second
+  // permission button on this page — Settings remains canonical, see
+  // NotificationsSettingsPanel.tsx). Only shown in the one state where it's
+  // actually actionable: signed in, capable browser, simply not enabled
+  // yet. Every other state (checking/unsupported/blocked/not-configured/
+  // already enabled) shows nothing here.
+  const push = usePushNotifications();
   // Correctness-review fix (Issue D) — never scales with library size:
   // only the LibraryItems behind an active release reminder are passed to
   // Stage 33's hook, never the user's entire (possibly large) AniList-
@@ -123,6 +131,11 @@ export function ReminderCenterView({ items: initialItems }: ReminderCenterViewPr
       <PageContainer width="narrow" className="space-y-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-foreground">Reminders</h1>
+          {push.state.kind === "not-enabled" && (
+            <Link href="/settings/notifications" className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline">
+              Browser notifications are off · Enable
+            </Link>
+          )}
         </div>
 
         {loadError && <DataErrorBanner message={loadError} onRetry={retry} />}
