@@ -4,6 +4,7 @@ import type {
   BackupCollection,
   BackupData,
   BackupLibraryItem,
+  BackupTrackingSource,
   MarklyBackupV1,
 } from "@/types/backup";
 import { BACKUP_FORMAT, BACKUP_VERSION } from "@/types/backup";
@@ -24,15 +25,19 @@ import {
 } from "@/lib/tracking";
 import {
   MAX_ACTIVITY_EVENTS,
+  MAX_ADAPTER_ID_LENGTH,
   MAX_CATEGORY_LENGTH,
   MAX_COLLECTIONS,
   MAX_COLLECTION_NAME_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_ITEM_IDS_PER_COLLECTION,
   MAX_LIBRARY_ITEMS,
+  MAX_SOURCE_KEY_LENGTH,
+  MAX_SOURCE_TITLE_LENGTH,
   MAX_STRING_ARRAY_ITEM_LENGTH,
   MAX_STRING_ARRAY_LENGTH,
   MAX_TITLE_LENGTH,
+  MAX_TRACKING_SOURCES,
   MAX_URL_LENGTH,
 } from "@/lib/backup/limits";
 
@@ -50,6 +55,23 @@ import {
  *     that record and continue — the same "clamp or drop, never fail the
  *     whole array" policy `lib/library-storage.ts`'s local validator
  *     already uses for exactly this kind of tolerant-but-safe parsing.
+ *
+ * Stage 40 data-integrity correction — version-compatibility analysis for
+ * the new optional `data.trackingSources` section: this validator has,
+ * since BACKUP_VERSION 1, already read `data.libraryItems`/`collections`/
+ * `activityEvents` as `Array.isArray(rawX) ? rawX : []` — i.e. a MISSING
+ * key was always treated as "zero records of that kind," never a
+ * structural error — and it has never rejected a `data` object for
+ * carrying an EXTRA key it doesn't recognize (only the specific known keys
+ * are ever read off of it). Both directions of forward/backward
+ * compatibility this new section needs were therefore already true before
+ * this correction existed: an OLD build's validator reading a NEW export
+ * (one that now includes `trackingSources`) simply never looks at that
+ * key and ignores it; a NEW build's validator reading an OLD backup (no
+ * `trackingSources` key at all) treats it as the same "zero records"
+ * case every other section already falls back to. No BACKUP_VERSION bump
+ * is needed for this addition — the format was already designed to
+ * tolerate exactly this kind of additive, ignorable-if-absent section.
  */
 
 export type ValidateBackupFailureReason =
@@ -66,7 +88,8 @@ export interface ValidatedBackup {
   libraryItems: BackupLibraryItem[];
   collections: BackupCollection[];
   activityEvents: BackupActivityEvent[];
-  skipped: { libraryItems: number; collections: number; activityEvents: number };
+  trackingSources: BackupTrackingSource[];
+  skipped: { libraryItems: number; collections: number; activityEvents: number; trackingSources: number };
 }
 
 export type ValidateBackupResult =
@@ -306,6 +329,46 @@ function validateActivityEvent(raw: unknown, validItemIds: Set<string>): BackupA
 }
 
 /**
+ * Stage 40 data-integrity correction. Drops (returns null for) the whole
+ * record on ANY structural or safety problem — unlike LibraryItem's
+ * per-field clamp-and-continue tolerance, a TrackingSource with no valid,
+ * safe URL has nothing left worth restoring (there's no page to open),
+ * so partial-record tolerance doesn't apply here the way it does for a
+ * LibraryItem's optional cosmetic fields.
+ *
+ * `sourceUrl` is re-validated with the EXACT same `isValidUrl` policy the
+ * live Add Source route enforces (Stage 40 §12 of this correction) —
+ * javascript:/data:/blob:/file: schemes and credential-bearing URLs are
+ * rejected here exactly as they would be live, so a crafted backup file
+ * can never smuggle an unsafe URL past this boundary and into a restored,
+ * clickable "Open Source" link.
+ */
+function validateTrackingSource(raw: unknown, validItemIds: Set<string>, exportedAt: string): BackupTrackingSource | null {
+  if (!isPlainObject(raw)) return null;
+
+  const backupItemId = raw.backupItemId;
+  if (typeof backupItemId !== "string" || !validItemIds.has(backupItemId)) return null;
+
+  if (!isNonEmptyString(raw.adapterId, MAX_ADAPTER_ID_LENGTH)) return null;
+  if (!isNonEmptyString(raw.sourceKey, MAX_SOURCE_KEY_LENGTH)) return null;
+  if (!isNonEmptyString(raw.sourceTitle, MAX_SOURCE_TITLE_LENGTH)) return null;
+
+  const sourceUrl = normalizeUrlField(raw.sourceUrl);
+  if (!sourceUrl) return null;
+
+  return {
+    backupItemId,
+    adapterId: raw.adapterId,
+    sourceKey: raw.sourceKey,
+    sourceTitle: raw.sourceTitle,
+    sourceUrl,
+    autoTrackEnabled: raw.autoTrackEnabled === true,
+    suppressed: raw.suppressed === true,
+    lastSeenAt: isValidIsoDate(raw.lastSeenAt) ? raw.lastSeenAt : exportedAt,
+  };
+}
+
+/**
  * Validates a raw parsed JSON value against the backup v1 contract. Never
  * throws — every failure mode returns a typed result with a plain-language
  * message. Call `validateBackupFile` instead when starting from a `File`
@@ -335,10 +398,12 @@ export function validateBackupObject(raw: unknown): ValidateBackupResult {
   const rawItems = data.libraryItems;
   const rawCollections = data.collections;
   const rawActivity = data.activityEvents;
+  const rawTrackingSources = data.trackingSources;
   if (
     (rawItems !== undefined && !Array.isArray(rawItems)) ||
     (rawCollections !== undefined && !Array.isArray(rawCollections)) ||
-    (rawActivity !== undefined && !Array.isArray(rawActivity))
+    (rawActivity !== undefined && !Array.isArray(rawActivity)) ||
+    (rawTrackingSources !== undefined && !Array.isArray(rawTrackingSources))
   ) {
     return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
   }
@@ -346,8 +411,16 @@ export function validateBackupObject(raw: unknown): ValidateBackupResult {
   const itemsArray = Array.isArray(rawItems) ? rawItems : [];
   const collectionsArray = Array.isArray(rawCollections) ? rawCollections : [];
   const activityArray = Array.isArray(rawActivity) ? rawActivity : [];
+  // Absent entirely (any pre-Stage-40 backup, or a local-mode export) is a
+  // valid, ordinary empty array here — never a reason to reject the file.
+  const trackingSourcesArray = Array.isArray(rawTrackingSources) ? rawTrackingSources : [];
 
-  if (itemsArray.length > MAX_LIBRARY_ITEMS || collectionsArray.length > MAX_COLLECTIONS || activityArray.length > MAX_ACTIVITY_EVENTS) {
+  if (
+    itemsArray.length > MAX_LIBRARY_ITEMS ||
+    collectionsArray.length > MAX_COLLECTIONS ||
+    activityArray.length > MAX_ACTIVITY_EVENTS ||
+    trackingSourcesArray.length > MAX_TRACKING_SOURCES
+  ) {
     return { ok: false, reason: "too_many_records", message: "This backup is too large to import." };
   }
 
@@ -392,6 +465,14 @@ export function validateBackupObject(raw: unknown): ValidateBackupResult {
     else skippedActivity++;
   }
 
+  const trackingSources: BackupTrackingSource[] = [];
+  let skippedTrackingSources = 0;
+  for (const rawSource of trackingSourcesArray) {
+    const source = validateTrackingSource(rawSource, validItemIds, exportedAt);
+    if (source) trackingSources.push(source);
+    else skippedTrackingSources++;
+  }
+
   // If the file had records but literally every single one was invalid,
   // treat this as a malformed file rather than a suspiciously-empty
   // "successful" import — matches "reject malformed required fields"
@@ -408,7 +489,8 @@ export function validateBackupObject(raw: unknown): ValidateBackupResult {
       libraryItems,
       collections,
       activityEvents,
-      skipped: { libraryItems: skippedItems, collections: skippedCollections, activityEvents: skippedActivity },
+      trackingSources,
+      skipped: { libraryItems: skippedItems, collections: skippedCollections, activityEvents: skippedActivity, trackingSources: skippedTrackingSources },
     },
   };
 }

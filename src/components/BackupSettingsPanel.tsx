@@ -11,13 +11,13 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { DataErrorBanner } from "@/components/DataStatus";
 import { Button } from "@/components/Button";
 import { buildAndValidateBackup } from "@/lib/backup/export";
-import { fetchActivityEventsForExport } from "@/lib/cloud/backup";
+import { fetchActivityEventsForExport, fetchTrackingSourcesForExport } from "@/lib/cloud/backup";
 import { downloadBackupFile } from "@/lib/backup/download";
 import { validateBackupFile, type ValidatedBackup } from "@/lib/backup/validate";
 import { MAX_BACKUP_FILE_SIZE_BYTES } from "@/lib/backup/limits";
 import { buildImportPlan, type ImportPlan } from "@/lib/backup/plan";
 import { applyImportPlanLocally, computeLocalActivityRetention } from "@/lib/backup/apply-local";
-import { importLibraryBackup } from "@/lib/cloud/backup-import";
+import { importLibraryBackup, restoreTrackingSourcesFromBackup } from "@/lib/cloud/backup-import";
 import { fetchLibraryItems } from "@/lib/cloud/library-items";
 import { fetchCollections } from "@/lib/cloud/collections";
 import { formatDate } from "@/lib/item-detail";
@@ -69,6 +69,13 @@ type ImportState =
       possibleDuplicatesSkipped: number;
       /** Local mode only — how many otherwise-importable Activity events didn't survive the local history cap. Always 0 in cloud mode. */
       activitySkippedForCapacity: number;
+      /** Stage 40 — cloud mode only, always 0 in local mode (tracking_sources has no local sink). See restoreTrackingSourcesFromBackup. */
+      sourcesCreated: number;
+      sourcesLinked: number;
+      sourcesAlreadyLinked: number;
+      sourcesConflicted: number;
+      /** How many sources in the backup could not even be attempted — their parent item was newly created by this same import, whose real id import_library_backup never returns to the client (see the Stage 40 final report's architecture note). Always 0 in local mode. */
+      sourcesUnresolvable: number;
     }
   | { step: "error"; message: string };
 
@@ -106,12 +113,13 @@ export function BackupSettingsPanel() {
         // Fresh, uncapped fetches — never the app's already-loaded state,
         // which for Activity is capped at the Recent Activity display
         // limit (see lib/cloud/backup.ts's doc comment).
-        const [items, collections, allEvents] = await Promise.all([
+        const [items, collections, allEvents, trackingSourceRows] = await Promise.all([
           fetchLibraryItems(supabase, userId),
           fetchCollections(supabase, userId),
           fetchActivityEventsForExport(supabase, userId),
+          fetchTrackingSourcesForExport(supabase, userId),
         ]);
-        const result = buildAndValidateBackup(items, collections, allEvents);
+        const result = buildAndValidateBackup(items, collections, allEvents, trackingSourceRows);
         if (!result.ok || !result.backup) throw new Error("Could not prepare a valid backup. Please try again.");
         downloadBackupFile(result.backup);
         return;
@@ -158,7 +166,7 @@ export function BackupSettingsPanel() {
 
   async function handleConfirmImport() {
     if (importState.step !== "preview") return;
-    const { plan } = importState;
+    const { plan, validated } = importState;
     setImportState({ step: "importing" });
 
     try {
@@ -175,6 +183,23 @@ export function BackupSettingsPanel() {
                 : "Couldn't import this backup. Try again.",
           );
         }
+        // Migration 0018 — attempted only after the main import has
+        // already committed (restore-order requirement), and never
+        // allowed to undo it: a failure here is caught and reported as
+        // zero restored sources rather than failing the whole import,
+        // since the items/collections/activity above are already safely
+        // persisted. Resolution uses the RPC's own returned `itemMap` —
+        // the authoritative source of truth for both newly-created and
+        // already-present parent items alike (see
+        // restoreTrackingSourcesFromBackup's own doc comment) — never
+        // this plan's own pre-import estimate.
+        let sourceResult = { created: 0, linked: 0, alreadyLinked: 0, conflicts: 0, suppressedElsewhere: 0, skippedInvalid: 0, unresolvable: 0 };
+        try {
+          sourceResult = await restoreTrackingSourcesFromBackup(validated.trackingSources, result.itemMap ?? []);
+        } catch {
+          // Non-fatal — see the comment above. The main import already
+          // succeeded regardless of what happens here.
+        }
         await Promise.all([library.reload(), collectionsStore.reload(), activity.reload()]);
         setImportState({
           step: "done",
@@ -185,6 +210,11 @@ export function BackupSettingsPanel() {
           activityCreated: result.activityCreated ?? 0,
           possibleDuplicatesSkipped: plan.counts.itemsPossibleDuplicate - plan.counts.itemsPossibleDuplicateIncluded,
           activitySkippedForCapacity: 0,
+          sourcesCreated: sourceResult.created,
+          sourcesLinked: sourceResult.linked,
+          sourcesAlreadyLinked: sourceResult.alreadyLinked,
+          sourcesConflicted: sourceResult.conflicts,
+          sourcesUnresolvable: sourceResult.unresolvable,
         });
         return;
       }
@@ -208,6 +238,13 @@ export function BackupSettingsPanel() {
         activityCreated: applied.activityImportedCount,
         activitySkippedForCapacity: applied.activitySkippedForCapacity,
         possibleDuplicatesSkipped: plan.counts.itemsPossibleDuplicate - plan.counts.itemsPossibleDuplicateIncluded,
+        // Local mode never restores TrackingSources — no local/signed-out
+        // sink exists for them at all (see ItemTrackingSourcesSection).
+        sourcesCreated: 0,
+        sourcesLinked: 0,
+        sourcesAlreadyLinked: 0,
+        sourcesConflicted: 0,
+        sourcesUnresolvable: 0,
       });
     } catch (err) {
       setImportState({ step: "error", message: err instanceof Error ? err.message : "Couldn't import this backup. Try again." });
@@ -255,7 +292,11 @@ export function BackupSettingsPanel() {
       <section className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-5">
         <h2 className="text-base font-semibold text-foreground">Import Backup</h2>
         <p className="text-sm text-muted-foreground">Restore or add items from a Markly backup file. Nothing changes until you confirm.</p>
-        <p className="text-xs text-muted-foreground">Automatic tracking connections are not included in backups.</p>
+        {userId ? (
+          <p className="text-xs text-muted-foreground">Sources linked to your library items are restored too, whether that item already existed or was just created by this import.</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">Sources aren&rsquo;t part of local backups — sign in to include and restore them.</p>
+        )}
 
         {importState.step === "idle" && (
           <label className="inline-block cursor-pointer rounded-md border border-border px-3.5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover">
@@ -317,6 +358,20 @@ export function BackupSettingsPanel() {
               )}
               {importState.possibleDuplicatesSkipped > 0 && (
                 <li>{importState.possibleDuplicatesSkipped} possible duplicates skipped — review them from the Library page</li>
+              )}
+              {(importState.sourcesCreated > 0 || importState.sourcesLinked > 0) && (
+                <li>{importState.sourcesCreated + importState.sourcesLinked} sources restored</li>
+              )}
+              {importState.sourcesAlreadyLinked > 0 && <li>{importState.sourcesAlreadyLinked} sources were already linked</li>}
+              {importState.sourcesConflicted > 0 && (
+                <li>{importState.sourcesConflicted} sources were already linked to a different item and were left alone</li>
+              )}
+              {importState.sourcesUnresolvable > 0 && (
+                <li>
+                  {importState.sourcesUnresolvable} source{importState.sourcesUnresolvable === 1 ? "" : "s"} couldn&rsquo;t be matched to a
+                  library item and {importState.sourcesUnresolvable === 1 ? "wasn't" : "weren't"} restored — add{" "}
+                  {importState.sourcesUnresolvable === 1 ? "it" : "them"} again from that item&rsquo;s own page
+                </li>
               )}
             </ul>
             <button type="button" onClick={resetImport} className="mt-2 text-xs font-medium text-accent hover:underline">
@@ -383,6 +438,14 @@ function ImportPreview({ validated, plan, includePossibleDuplicates, activitySki
           Activity: {counts.activityImport - activitySkippedForCapacity} to restore, {counts.activitySkipped} not applicable
           {activitySkippedForCapacity > 0 ? `, ${activitySkippedForCapacity} skipped due to local history limit` : ""}
         </p>
+        {counts.trackingSourcesInBackup > 0 && (
+          <p className="text-muted-foreground">
+            Sources: {counts.trackingSourcesResolvable} to restore
+            {counts.trackingSourcesInBackup > counts.trackingSourcesResolvable
+              ? `, ${counts.trackingSourcesInBackup - counts.trackingSourcesResolvable} not matched to a library item`
+              : ""}
+          </p>
+        )}
       </div>
 
       {counts.itemsPossibleDuplicate > 0 && (
@@ -397,10 +460,13 @@ function ImportPreview({ validated, plan, includePossibleDuplicates, activitySki
         </label>
       )}
 
-      {(validated.skipped.libraryItems > 0 || validated.skipped.collections > 0 || validated.skipped.activityEvents > 0) && (
+      {(validated.skipped.libraryItems > 0 ||
+        validated.skipped.collections > 0 ||
+        validated.skipped.activityEvents > 0 ||
+        validated.skipped.trackingSources > 0) && (
         <p className="text-xs text-muted-foreground">
-          {validated.skipped.libraryItems + validated.skipped.collections + validated.skipped.activityEvents} record(s) in this file
-          couldn&rsquo;t be read and were skipped.
+          {validated.skipped.libraryItems + validated.skipped.collections + validated.skipped.activityEvents + validated.skipped.trackingSources}{" "}
+          record(s) in this file couldn&rsquo;t be read and were skipped.
         </p>
       )}
 

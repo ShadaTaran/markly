@@ -65,6 +65,21 @@ export interface ImportPlanCounts {
   collectionsReuse: number;
   activityImport: number;
   activitySkipped: number;
+  /** Stage 40 — total TrackingSource records in the backup file (0 for any pre-Stage-40 backup, or any local-mode export). */
+  trackingSourcesInBackup: number;
+  /**
+   * Stage 40 / migration 0018 — a PREVIEW-time ESTIMATE of how many of
+   * those this plan expects to be able to restore: any source whose
+   * parent item resolves to either "already_present" or a to-be-created
+   * "new" item (both are covered — see restoreTrackingSourcesFromBackup's
+   * own doc comment on why `itemMap` makes no distinction between them).
+   * The actual post-import count can differ slightly, exactly like
+   * itemsCreated/itemsReused already can, since a "new" candidate may
+   * still be revalidated/remapped server-side under concurrency. Always 0
+   * in local mode (tracking_sources has no local/signed-out sink at all —
+   * see apply-local.ts/BackupSettingsPanel).
+   */
+  trackingSourcesResolvable: number;
 }
 
 export interface ImportPlan {
@@ -179,6 +194,19 @@ export function buildImportPlan(
 
   const activityToImport = backup.activityEvents.filter((event) => resolvedItemIds.has(event.itemId));
 
+  // Stage 40 / migration 0018 — a PREVIEW-time estimate only: any source
+  // whose parent resolves to either a to-be-created OR an already-present
+  // item is counted as "resolvable" here (reusing the same
+  // `attachableItemIds` Collections already trust for the same
+  // distinction). The ACTUAL restore, after the RPC actually runs, uses
+  // import_library_backup's own returned `itemMap` as the sole authority
+  // for real ids — never this plan's own pre-import guess — since a
+  // "new" candidate can still be revalidated/remapped server-side (the
+  // same DEFECT 3 concurrency-safety logic itemsReused already reflects).
+  // This count can therefore differ slightly from what actually restores,
+  // exactly like itemsCreated/itemsReused already can.
+  const trackingSourcesResolvable = backup.trackingSources.filter((source) => attachableItemIds.has(source.backupItemId)).length;
+
   const itemsPossibleDuplicateTotal = items.filter((entry) => entry.classification === "possible_duplicate").length;
   const counts: ImportPlanCounts = {
     itemsNew: items.filter((entry) => entry.classification === "new").length,
@@ -189,6 +217,8 @@ export function buildImportPlan(
     collectionsReuse: collections.filter((entry) => entry.action === "reuse").length,
     activityImport: activityToImport.length,
     activitySkipped: backup.activityEvents.length - activityToImport.length,
+    trackingSourcesInBackup: backup.trackingSources.length,
+    trackingSourcesResolvable,
   };
 
   return { exportedAt: backup.exportedAt, items, collections, memberships, activityToImport, counts };

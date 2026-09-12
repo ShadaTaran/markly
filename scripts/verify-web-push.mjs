@@ -782,14 +782,15 @@ check("G14c (final-review-pass §3/§4, skipped-defer gating): the 'skipped' bra
   assert.ok(/if v_existing\.next_attempt_at is not null and v_existing\.next_attempt_at > v_now then\s*\n\s*return jsonb_build_object\('status', 'retry_pending'/.test(skippedBranch));
 });
 
-check("G14 (test §66): migrations 0001-0016 remain untouched — 0017 is additive and is now the latest", () => {
+check("G14 (test §66): migrations 0001-0016 remain untouched — 0017 was additive when this stage shipped, and the Stage 40 data-integrity correction's own 0018 is now the latest (bumped forward, same convention as every other stage's version of this check)", () => {
   const files = readdirSync("supabase/migrations").filter((name) => name.endsWith(".sql")).sort();
   const highest = files[files.length - 1];
-  assert.equal(highest, "0017_stage37_web_push.sql");
+  assert.equal(highest, "0018_stage40_backup_item_map.sql");
   for (let n = 1; n <= 16; n += 1) {
     const padded = String(n).padStart(4, "0");
     assert.ok(files.some((name) => name.startsWith(`${padded}_`)), `expected migration ${padded}_* to still exist`);
   }
+  assert.ok(files.some((name) => name.startsWith("0017_")), "expected 0017_stage37_web_push.sql to still exist");
 });
 
 // ============================================================

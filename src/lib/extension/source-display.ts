@@ -31,14 +31,26 @@ export function getSourceHostname(sourceUrl: string | null): string | null {
   }
 }
 
+/** Stage 40 — the reserved adapterId for a user-entered "Add Source" row (never a real extension adapter — see extension/src/adapters/*, none of which use it). */
+export const MANUAL_SOURCE_ADAPTER_ID = "manual";
+
 /**
- * The label a user sees for a tracking source. Adapter-level names win
- * when known; otherwise the source's own hostname (e.g. "novelphoenix.com",
- * or the friendlier "NovelPhoenix" where that mapping is known); the raw
- * adapterId is the last resort, only when neither is available (a source
- * with no parseable URL at all).
+ * The label a user sees for a tracking source.
+ *
+ * For a manual (Stage 40 Add Source) row, the user's own chosen label
+ * always wins — that label is the entire point of typing one in. For an
+ * extension-detected row, `sourceTitle` remains what it always was (an
+ * auto-captured page title, e.g. "Chapter 42 - MangaDex" — often less
+ * readable than the site name) and is deliberately NOT preferred here, so
+ * this change cannot regress how any existing detected source already
+ * displays: adapter-level names still win when known; otherwise the
+ * source's own hostname (e.g. "novelphoenix.com", or the friendlier
+ * "NovelPhoenix" where that mapping is known); the raw adapterId is the
+ * last resort, only when neither is available (a source with no parseable
+ * URL at all).
  */
-export function getSourceDisplayName(adapterId: string, sourceUrl: string | null): string {
+export function getSourceDisplayName(adapterId: string, sourceUrl: string | null, sourceTitle?: string): string {
+  if (adapterId === MANUAL_SOURCE_ADAPTER_ID && sourceTitle) return sourceTitle;
   if (ADAPTER_LABELS[adapterId]) return ADAPTER_LABELS[adapterId];
   const hostname = getSourceHostname(sourceUrl);
   if (hostname && HOSTNAME_LABELS[hostname]) return HOSTNAME_LABELS[hostname];
