@@ -171,8 +171,9 @@ check("E2: one component renders the list regardless of count — no separate 's
   assert.ok(!/sources\.length === 1/.test(sectionSource), "must not special-case exactly one source with different markup");
 });
 
-check("E3: the section still renders nothing at all when signed out — tracking_sources remains a cloud-only concept, unchanged from Stage 26", () => {
-  assert.ok(/if \(!userId \|\| !sources\) return null/.test(sectionSource));
+check("E3: the section still renders nothing at all when signed out — tracking_sources remains a cloud-only concept, unchanged from Stage 26. Stage 41.3 narrowed this guard from `!userId || !sources` to `!userId` alone, on purpose: a null source state can now also mean 'genuinely unknown after a failed post-mutation refresh' (not only 'still loading'), and that case must still render its own error/loading UI rather than vanishing — but signed-out must still render nothing at all, unconditionally.", () => {
+  assert.ok(/if \(!userId\) return null/.test(sectionSource), "the guard must still return null for a signed-out user");
+  assert.ok(!/if \(!userId \|\| !sources\) return null/.test(sectionSource), "the OLD combined guard must be gone — sources === null must no longer mean 'render nothing'");
 });
 
 check("E4: hostnames are truncated/wrapped safely, never allowed to overflow — reuses the existing truncate class convention", () => {

@@ -28,11 +28,12 @@ import {
 import { formatDueRelative } from "@/lib/reminder-format";
 import { formatReleaseEventFullDateTime, getLocalTimeZone, DEFAULT_CALENDAR_RANGE_DAYS } from "@/lib/release-calendar";
 import { getItemHref } from "@/lib/item-detail";
-import { resolveResumeTarget } from "@/lib/dashboard";
+import { resolveResumeTarget } from "@/lib/resume";
 import { RemindMeReleaseDialog } from "@/components/RemindMeReleaseDialog";
 import { RemindMeContinueDialog } from "@/components/RemindMeContinueDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
+import { SourceChooserDialog } from "@/components/SourceChooserDialog";
 import { ClockIcon } from "@/components/icons";
 
 interface ReminderCenterViewProps {
@@ -313,6 +314,7 @@ function ReminderRow({
       ? `Episode ${reminder.episode}${entry.scheduleConfirmed === false ? " · Schedule not currently confirmed" : ""}`
       : "Continue reminder";
   const resume = reminder.kind === "continue" ? resolveResumeTarget(item, trackingSources) : null;
+  const [chooserOpen, setChooserOpen] = useState(false);
 
   return (
     <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -335,10 +337,18 @@ function ReminderRow({
         <Link href={getItemHref(item)} className="text-foreground hover:underline">
           Open item
         </Link>
-        {resume && resume.kind === "external" && (
+        {resume && (resume.kind === "direct" || resume.kind === "canonical_url") && (
           <a href={resume.url} target="_blank" rel="noopener noreferrer" className="text-foreground hover:underline">
-            Continue
+            {resume.actionLabel}
           </a>
+        )}
+        {resume && resume.kind === "choose_source" && (
+          <>
+            <button type="button" onClick={() => setChooserOpen(true)} className="text-foreground hover:underline">
+              {resume.actionLabel}
+            </button>
+            <SourceChooserDialog isOpen={chooserOpen} onClose={() => setChooserOpen(false)} itemTitle={item.title} sources={resume.sources} />
+          </>
         )}
         {!entry.isDismissed && onDismiss && (
           <button type="button" onClick={() => onDismiss(entry)} className="text-muted-foreground hover:text-foreground hover:underline">
