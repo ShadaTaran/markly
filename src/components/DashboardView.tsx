@@ -26,12 +26,9 @@ import { getStatusLabel, getProgressInfo } from "@/lib/tracking";
 import { getUniqueCategories } from "@/lib/library-items";
 import { resolveActivationState, shouldShowAutoTrackingNudge } from "@/lib/onboarding";
 import { ProgressBar } from "@/components/ProgressBar";
-import {
-  getBuiltInViewItems,
-  formatDashboardProgress,
-  resolveResumeTarget,
-  countActiveWithinDays,
-} from "@/lib/dashboard";
+import { getBuiltInViewItems, formatDashboardProgress, countActiveWithinDays } from "@/lib/dashboard";
+import { resolveResumeTarget } from "@/lib/resume";
+import { SourceChooserDialog } from "@/components/SourceChooserDialog";
 import { DEFAULT_CALENDAR_RANGE_DAYS, formatReleaseDayLabel, formatReleaseEventTime, getLocalDayKey, getLocalTimeZone } from "@/lib/release-calendar";
 import { CONTINUE_VIEW_ID, RECENTLY_ACTIVE_VIEW_ID, STALLED_VIEW_ID, type SmartViewContext } from "@/lib/smart-views";
 import { ItemTypeIcon } from "@/components/ItemTypeIcon";
@@ -552,11 +549,10 @@ function ContinueCard({
   resumeTarget: ReturnType<typeof resolveResumeTarget>;
   lastActiveLabel: string | null;
 }) {
+  const [chooserOpen, setChooserOpen] = useState(false);
   const progressText = formatDashboardProgress(item);
   const progressPercent = isMediaItem(item) ? getProgressInfo(item)?.percent : undefined;
   const typeLabel = ITEM_TYPE_LABELS[item.type];
-  const isExternal = resumeTarget.kind === "external";
-  const ctaLabel = isExternal ? "Continue" : "Open item";
   const imageUrl = "imageUrl" in item ? item.imageUrl : undefined;
 
   return (
@@ -595,24 +591,43 @@ function ContinueCard({
           ) : (
             <span />
           )}
-          {isExternal ? (
+          {(resumeTarget.kind === "direct" || resumeTarget.kind === "canonical_url") && (
             <a
               href={resumeTarget.url}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`${ctaLabel} ${item.title}${resumeTarget.hostname ? ` on ${resumeTarget.sourceLabel ?? resumeTarget.hostname}` : ""}`}
+              aria-label={`${resumeTarget.actionLabel} ${item.title}${resumeTarget.hostname ? ` on ${resumeTarget.kind === "direct" ? (resumeTarget.sourceLabel ?? resumeTarget.hostname) : resumeTarget.hostname}` : ""}`}
               className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             >
-              {ctaLabel}
+              {resumeTarget.actionLabel}
               <ExternalLinkIcon width={10} height={10} />
             </a>
-          ) : (
+          )}
+          {resumeTarget.kind === "choose_source" && (
+            <>
+              <button
+                type="button"
+                onClick={() => setChooserOpen(true)}
+                aria-label={`${resumeTarget.actionLabel} ${item.title} — choose a source`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              >
+                {resumeTarget.actionLabel}
+              </button>
+              <SourceChooserDialog
+                isOpen={chooserOpen}
+                onClose={() => setChooserOpen(false)}
+                itemTitle={item.title}
+                sources={resumeTarget.sources}
+              />
+            </>
+          )}
+          {resumeTarget.kind === "unavailable" && (
             <Link
-              href={resumeTarget.url}
-              aria-label={`${ctaLabel} ${item.title}`}
+              href={getItemHref(item)}
+              aria-label={`Open item ${item.title}`}
               className="shrink-0 text-xs font-medium text-accent hover:underline focus-visible:outline-none focus-visible:underline"
             >
-              {ctaLabel}
+              Open item
             </Link>
           )}
         </div>

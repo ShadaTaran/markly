@@ -1,10 +1,7 @@
 import type { LibraryItem } from "@/types/library-item";
-import type { TrackingSourceSummary } from "@/lib/extension/types";
 import { applySmartView, findBuiltInSmartView, type ActivitySummary, type SmartViewContext } from "@/lib/smart-views";
 import { getProgressInfo } from "@/lib/tracking";
-import { isMediaItem, getItemHref } from "@/lib/item-detail";
-import { isValidUrl } from "@/lib/website";
-import { getSafeOpenSourceUrl, getSourceDisplayName, getSourceHostname } from "@/lib/extension/source-display";
+import { isMediaItem } from "@/lib/item-detail";
 
 /**
  * Stage 32 — Dashboard-specific pure helpers. Deliberately thin: every piece
@@ -47,92 +44,15 @@ export function formatDashboardProgress(item: LibraryItem): string | null {
 }
 
 // ============================================================
-// Resume target resolution (Stage 32 §11-§17, §34-§36, §48)
-// ============================================================
-
-export interface ResumeTarget {
-  kind: "external" | "internal";
-  url: string;
-  /** Only set for an external target resolved from a TrackingSource — the optional subtle source indicator (§32/§33). Never set for a LibraryItem's own sourceUrl/url, since there's no adapter identity behind those to name. */
-  sourceLabel?: string;
-  hostname?: string;
-}
-
-/**
- * Picks the single best eligible TrackingSource for an item, or null if
- * none qualifies. Eligible = linked to this item (library_item_id ===
- * item.id) AND has a URL that survives getSafeOpenSourceUrl's own
- * validation (which already prefers a Stage 21 stable work URL over the
- * raw last-detected page, and rejects anything isValidUrl rejects).
- * Deterministic tie-break: most recently seen first (lastSeenAt is a real
- * column — never a fabricated "last used" signal), then id ascending so
- * two sources seen at the identical instant still resolve to one answer
- * every time.
- */
-export function selectBestTrackingSource(sources: readonly TrackingSourceSummary[], itemId: string): TrackingSourceSummary | null {
-  const eligible = sources.filter((source) => source.libraryItemId === itemId);
-  const withSafeUrl = eligible.filter((source) => getSafeOpenSourceUrl(source) !== null);
-  if (withSafeUrl.length === 0) return null;
-
-  const sorted = [...withSafeUrl].sort((a, b) => {
-    const byLastSeen = b.lastSeenAt.localeCompare(a.lastSeenAt);
-    if (byLastSeen !== 0) return byLastSeen;
-    return a.id.localeCompare(b.id);
-  });
-  return sorted[0];
-}
-
-/** The LibraryItem's own stored link — item.url for a Website (always present), item.sourceUrl for a MediaItem (optional, user-entered "where you found this or track this"). Undefined for GenericLibraryItem (article/video/other), which has neither field. */
-function ownStoredUrl(item: LibraryItem): string | undefined {
-  if (item.type === "website") return item.url;
-  if (isMediaItem(item)) return item.sourceUrl;
-  return undefined;
-}
-
-/**
- * The one place Dashboard ever decides where "Continue" navigates.
- * Priority (§12, confirmed against the real data model in Phase 0 — no
- * priority reordering was warranted):
- *   1. The best eligible TrackingSource (see selectBestTrackingSource) —
- *      real consumption history, not catalog metadata. Works identically
- *      for a source the extension created and one an adapter created;
- *      neither is treated as more or less authoritative (§34).
- *   2. The LibraryItem's own stored URL, ONLY if it passes the same
- *      isValidUrl check every external target must pass (§15) — never
- *      catalogSource (§35/§36: it has no url field at all, so it can
- *      never reach here regardless).
- *   3. The internal detail page — always available, never fails.
- * Never invents a URL (no /chapter/{progress} synthesis, no
- * anilist.co/... construction from catalogSource.provider).
- */
-export function resolveResumeTarget(item: LibraryItem, trackingSources: readonly TrackingSourceSummary[]): ResumeTarget {
-  const best = selectBestTrackingSource(trackingSources, item.id);
-  if (best) {
-    const url = getSafeOpenSourceUrl(best);
-    if (url) {
-      return {
-        kind: "external",
-        url,
-        // Derived from `url` itself (the URL that will actually open), not
-        // best.sourceUrl — so the displayed name/host can never disagree
-        // with the href, even in principle (Stage 32 correctness review
-        // §9). getSafeOpenSourceUrl's own trust invariant already
-        // guarantees `url` shares sourceUrl's host whenever it's workUrl,
-        // so this is never a behavior change, only a stronger guarantee.
-        sourceLabel: getSourceDisplayName(best.adapterId, url, best.sourceTitle),
-        hostname: getSourceHostname(url) ?? undefined,
-      };
-    }
-  }
-
-  const stored = ownStoredUrl(item);
-  if (stored && isValidUrl(stored)) {
-    return { kind: "external", url: stored, hostname: getSourceHostname(stored) ?? undefined };
-  }
-
-  return { kind: "internal", url: getItemHref(item) };
-}
-
+// Resume/Continue resolution moved to lib/resume.ts (Stage 41) — see that
+// file's own doc comment for why: this file being the only pre-Stage-41
+// caller of resolveResumeTarget/selectBestTrackingSource is exactly what
+// let Item Detail and Library's card overflow menu each grow their own
+// SEPARATE, divergent "what URL do I open" logic instead of sharing one.
+// Re-export removed deliberately (not `export { resolveResumeTarget } from
+// "@/lib/resume"`) so every call site's import statement visibly points
+// at the real, general-purpose home rather than this Dashboard-specific
+// module.
 // ============================================================
 // Activity snapshot (Stage 32 §24-§27) — item counts only, never event
 // counts, so this is accurate for both local (durable summary) and cloud

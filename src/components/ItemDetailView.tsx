@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
 import type { ContinueReminder } from "@/types/reminder";
+import type { TrackingSourceSummary } from "@/lib/extension/types";
 import { ITEM_TYPE_LABELS } from "@/types/library-item";
 import { useAuth } from "@/components/AuthProvider";
 import { DataErrorBanner } from "@/components/DataStatus";
@@ -12,6 +13,8 @@ import { useLibraryItems } from "@/hooks/useLibraryItems";
 import { useCollections } from "@/hooks/useCollections";
 import { useActivity } from "@/hooks/useActivity";
 import { useReminders } from "@/hooks/useReminders";
+import { resolveResumeTarget, type ResumeTarget } from "@/lib/resume";
+import { SourceChooserDialog } from "@/components/SourceChooserDialog";
 import { PageContainer } from "@/components/PageContainer";
 import { IconButton } from "@/components/IconButton";
 import { getDomain, getFaviconUrl } from "@/lib/website";
@@ -69,6 +72,7 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [membershipOpen, setMembershipOpen] = useState(false);
   const [remindMeOpen, setRemindMeOpen] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(false);
   // Stage 28 — this page navigates away immediately after a successful
   // delete, so its own Undo toast can't persist here; instead it hands the
   // recovery id off to /library via setPendingUndoToast and only shows a
@@ -81,6 +85,53 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
     const timer = setTimeout(() => setResultToast(null), 5000);
     return () => clearTimeout(timer);
   }, [resultToast]);
+
+  // Stage 41 — this page's own primary Continue/Open action goes through
+  // the same lib/resume.ts engine Dashboard uses, which needs this item's
+  // linked TrackingSources.
+  //
+  // Stage 41.2 — this is now the ONE fetch and the ONE state for this
+  // item's TrackingSources on this page. A production live test found
+  // that ItemDetailView and ItemTrackingSourcesSection previously each
+  // fetched and held their own independent copy: Add Source / Unlink
+  // updated only the section's local copy, so this page's own primary
+  // Continue button could keep showing a stale target (or none) until a
+  // reload. ItemTrackingSourcesSection is now a controlled component —
+  // it receives `trackingSources` as a prop and reports every add/link/
+  // unlink/toggle back through `handleSourcesChange`, so both the primary
+  // action above and the Sources list below always render from the exact
+  // same array, in the same render pass, with no reload and no polling.
+  //
+  // `null` means "we do not yet/no longer authoritatively know this
+  // item's TrackingSource set" — covering both initial loading AND a
+  // failed fetch (Stage 41.4: a failed fetch is NOT the same as a
+  // confirmed-zero result, so it must not be silently promoted to `[]`
+  // either — see the `sourceStateUnknown` gate below, which is the actual
+  // consumer of this distinction).
+  const [trackingSources, setTrackingSources] = useState<TrackingSourceSummary[] | null>(null);
+  useEffect(() => {
+    // No setState here for the signed-out case: the gate below already
+    // treats a permanently-null trackingSources as "not applicable" (not
+    // "unknown") whenever userId is null — there's nothing to reset, so
+    // this stays a pure "fetch and subscribe" body with no synchronous
+    // setState call in it.
+    if (!userId) return;
+    let cancelled = false;
+    fetch(`/api/tracking-sources?libraryItemId=${encodeURIComponent(itemId)}`)
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("failed"))))
+      .then((data: { sources: TrackingSourceSummary[] }) => {
+        if (!cancelled) setTrackingSources(data.sources);
+      })
+      .catch(() => {
+        // Stage 41.4 — a failed fetch tells us nothing about the real
+        // TrackingSource set; leaving/resetting to `null` (never `[]`)
+        // keeps that honest instead of quietly claiming "confirmed zero".
+        if (!cancelled) setTrackingSources(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, userId]);
 
   if (!library.isHydrated) {
     return (
@@ -130,8 +181,34 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   // as where they're defined), but the two are guaranteed equal since
   // `item` was found by matching this exact id.
   const itemCollections = collectionsStore.collections.filter((collection) => collection.itemIds.includes(itemId));
-  const externalUrl = item.type === "website" ? item.url : media?.sourceUrl;
-  const externalLinkLabel = item.type === "website" ? "Open Website" : "Open Source";
+  // Stage 41 — the one authoritative Continue/Resume/Open decision (see
+  // lib/resume.ts). Replaces this page's own previous, independent
+  // "media?.sourceUrl direct" primitive, which never consulted
+  // TrackingSources at all — a real gap the Stage 41 audit found (an item
+  // with zero manually-entered sourceUrl but a linked Source Hub source
+  // previously showed no primary action whatsoever).
+  //
+  // Stage 41.4 (CRITICAL) — `trackingSources ?? []` alone is not safe: []
+  // means "an authoritative fetch confirmed zero linked sources" (which
+  // legitimately unlocks resolveResumeTarget's own item.sourceUrl
+  // canonical_url fallback), while `null` means "we don't actually know
+  // yet" (still loading, or a mutation succeeded but its reconciling
+  // refresh failed — Stage 41.3). Silently treating null as [] would let
+  // that canonical fallback leak through as an authoritative-looking
+  // resume target during a window where the real TrackingSource set is
+  // unknown and could in fact be ambiguous (e.g. mid-reconciliation after
+  // adding a second source). This gate applies ONLY to authenticated
+  // trackable media: website items never read the second argument at all
+  // (resolveResumeTarget's own first branch resolves them purely from
+  // item.url), and signed-out/local media has no cloud TrackingSource
+  // concept to be "unknown" about — trackingSources stays permanently
+  // null there by design, which correctly means "not applicable", not
+  // "not yet known", so local mode's existing sourceUrl fallback is
+  // untouched.
+  const sourceStateUnknown = userId !== null && media !== null && trackingSources === null;
+  const resumeTarget: ResumeTarget = sourceStateUnknown
+    ? { kind: "unavailable", reason: "no-target" }
+    : resolveResumeTarget(item, trackingSources ?? []);
   const addedDate = formatDate(item.createdAt);
   const updatedDate = formatDate(item.updatedAt);
   const genres = media && "genres" in media && media.genres ? media.genres : [];
@@ -263,18 +340,38 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
               right below the title/identity block, matching the brief's
               "Continue/Open source should be easy to identify" — every
               other section keeps its exact existing content, only the
-              external-link CTA moved. */}
-          {externalUrl && (
+              external-link CTA moved. Stage 41 — now driven by
+              lib/resume.ts's resolveResumeTarget rather than a raw
+              sourceUrl read; see resumeTarget's own computation above. */}
+          {(resumeTarget.kind === "direct" || resumeTarget.kind === "canonical_url") && (
             <div className="flex flex-wrap items-center gap-2">
               <a
-                href={externalUrl}
+                href={resumeTarget.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               >
                 <ExternalLinkIcon width={15} height={15} />
-                {externalLinkLabel}
+                {resumeTarget.actionLabel}
               </a>
+            </div>
+          )}
+
+          {resumeTarget.kind === "choose_source" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setChooserOpen(true)}
+                className="flex items-center gap-1.5 rounded-md bg-foreground px-3.5 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              >
+                {resumeTarget.actionLabel}
+              </button>
+              <SourceChooserDialog
+                isOpen={chooserOpen}
+                onClose={() => setChooserOpen(false)}
+                itemTitle={item.title}
+                sources={resumeTarget.sources}
+              />
             </div>
           )}
 
@@ -288,7 +385,14 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
             />
           )}
 
-          {media && <ItemTrackingSourcesSection itemId={itemId} userId={userId} />}
+          {media && (
+            <ItemTrackingSourcesSection
+              itemId={itemId}
+              userId={userId}
+              sources={trackingSources}
+              onSourcesChange={setTrackingSources}
+            />
+          )}
 
           {media && <ItemMetadataRows rows={getCatalogMetadataRows(media)} />}
         </div>

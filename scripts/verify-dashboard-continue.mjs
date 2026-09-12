@@ -59,7 +59,10 @@ function getSourceHostname(sourceUrl) {
     return null;
   }
 }
-function getSourceDisplayName(adapterId, sourceUrl) {
+// Stage 40 — a manual (Stage 40 Add Source) row's own chosen label always
+// wins; every other source's display logic is unchanged from Stage 32.
+function getSourceDisplayName(adapterId, sourceUrl, sourceTitle) {
+  if (adapterId === "manual" && sourceTitle) return sourceTitle;
   if (ADAPTER_LABELS[adapterId]) return ADAPTER_LABELS[adapterId];
   const hostname = getSourceHostname(sourceUrl);
   if (hostname && HOSTNAME_LABELS[hostname]) return HOSTNAME_LABELS[hostname];
@@ -140,16 +143,57 @@ function formatDashboardProgress(item) {
   return getProgressInfo(item)?.text ?? null;
 }
 
+function byRecencyThenId(a, b) {
+  const byLastSeen = b.lastSeenAt.localeCompare(a.lastSeenAt);
+  if (byLastSeen !== 0) return byLastSeen;
+  return a.id.localeCompare(b.id);
+}
+
 function selectBestTrackingSource(sources, itemId) {
   const eligible = sources.filter((source) => source.libraryItemId === itemId);
   const withSafeUrl = eligible.filter((source) => getSafeOpenSourceUrl(source) !== null);
   if (withSafeUrl.length === 0) return null;
-  const sorted = [...withSafeUrl].sort((a, b) => {
-    const byLastSeen = b.lastSeenAt.localeCompare(a.lastSeenAt);
-    if (byLastSeen !== 0) return byLastSeen;
-    return a.id.localeCompare(b.id);
-  });
-  return sorted[0];
+  return [...withSafeUrl].sort(byRecencyThenId)[0];
+}
+
+// Stage 41 — see lib/resume.ts's own doc comment for the full rationale:
+// a manual source's last_seen_at means "time added/linked", never "time
+// consumed" (nothing updates it again after creation), so it can't safely
+// be compared against an extension-detected source's genuinely-refreshed
+// last_seen_at, or even against another manual source's own "time added".
+function selectContinueSource(sources, itemId) {
+  const eligible = sources.filter((source) => source.libraryItemId === itemId && getSafeOpenSourceUrl(source) !== null);
+  if (eligible.length === 0) return { kind: "none" };
+  if (eligible.length === 1) {
+    const source = eligible[0];
+    return { kind: "direct", source, url: getSafeOpenSourceUrl(source) };
+  }
+  const allGenuinelyTimestamped = eligible.every((source) => source.adapterId !== "manual");
+  if (allGenuinelyTimestamped) {
+    const best = [...eligible].sort(byRecencyThenId)[0];
+    return { kind: "direct", source: best, url: getSafeOpenSourceUrl(best) };
+  }
+  return { kind: "choose_source", sources: [...eligible].sort(byRecencyThenId) };
+}
+
+const CONTINUE_VERB = { anime: "watching", series: "watching", movie: "watching", manga: "reading", novel: "reading", game: "playing" };
+function getContinueActionLabel(item) {
+  if (item.type === "website") return "Open website";
+  if (!isMediaItem(item)) return "Open item";
+  const verb = CONTINUE_VERB[item.type];
+  switch (item.status) {
+    case "planned":
+      return `Start ${verb}`;
+    case "in_progress":
+      return `Continue ${verb}`;
+    case "on_hold":
+      return `Resume ${verb}`;
+    case "completed":
+    case "dropped":
+      return "Open source";
+    default:
+      return "Open source";
+  }
 }
 
 function ownStoredUrl(item) {
@@ -158,24 +202,47 @@ function ownStoredUrl(item) {
   return undefined;
 }
 
+function toResumeSourceOption(source) {
+  const url = getSafeOpenSourceUrl(source);
+  return {
+    sourceId: source.id,
+    url,
+    label: getSourceDisplayName(source.adapterId, source.sourceUrl, source.sourceTitle),
+    hostname: getSourceHostname(url),
+    progressText: source.lastDetectedProgress ? String(source.lastDetectedProgress.value) : "No progress detected yet",
+  };
+}
+
 function resolveResumeTarget(item, trackingSources) {
-  const best = selectBestTrackingSource(trackingSources, item.id);
-  if (best) {
-    const url = getSafeOpenSourceUrl(best);
-    if (url) {
-      return {
-        kind: "external",
-        url,
-        sourceLabel: getSourceDisplayName(best.adapterId, url),
-        hostname: getSourceHostname(url) ?? undefined,
-      };
-    }
+  if (item.type === "website") {
+    const stored = ownStoredUrl(item);
+    if (stored && isValidUrl(stored)) return { kind: "canonical_url", url: stored, actionLabel: "Open website", hostname: getSourceHostname(stored) ?? undefined };
+    return { kind: "unavailable", reason: "no-target" };
   }
+  if (!isMediaItem(item)) return { kind: "unavailable", reason: "no-target" };
+
+  const actionLabel = getContinueActionLabel(item);
+  const selection = selectContinueSource(trackingSources, item.id);
+
+  if (selection.kind === "direct") {
+    const { source, url } = selection;
+    return {
+      kind: "direct",
+      url,
+      actionLabel,
+      sourceLabel: getSourceDisplayName(source.adapterId, url, source.sourceTitle),
+      hostname: getSourceHostname(url) ?? undefined,
+    };
+  }
+  if (selection.kind === "choose_source") {
+    return { kind: "choose_source", actionLabel, sources: selection.sources.map(toResumeSourceOption) };
+  }
+
   const stored = ownStoredUrl(item);
   if (stored && isValidUrl(stored)) {
-    return { kind: "external", url: stored, hostname: getSourceHostname(stored) ?? undefined };
+    return { kind: "canonical_url", url: stored, actionLabel, hostname: getSourceHostname(stored) ?? undefined };
   }
-  return { kind: "internal", url: getItemHref(item) };
+  return { kind: "unavailable", reason: "no-target" };
 }
 
 function countActiveWithinDays(items, activitySummary, days, now) {
@@ -359,7 +426,7 @@ check("B1: valid https TrackingSource wins over nothing else", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "https://mangadex.org/title/abc" });
   const result = resolveResumeTarget(item, [source]);
-  assert.equal(result.kind, "external");
+  assert.equal(result.kind, "direct");
   assert.equal(result.url, "https://mangadex.org/title/abc");
 });
 check("B2: valid http source accepted", () => {
@@ -367,36 +434,35 @@ check("B2: valid http source accepted", () => {
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "http://example.com/x" });
   assert.equal(resolveResumeTarget(item, [source]).url, "http://example.com/x");
 });
-check("B3: javascript: scheme rejected, falls back internal (no other candidate)", () => {
+check("B3: javascript: scheme rejected, falls back unavailable (no other candidate)", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "javascript:alert(1)" });
   const result = resolveResumeTarget(item, [source]);
-  assert.equal(result.kind, "internal");
-  assert.equal(result.url, "/library/i1");
+  assert.equal(result.kind, "unavailable");
 });
 check("B4: data: scheme rejected", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "data:text/html,<script>1</script>" });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
 check("B5: file: scheme rejected", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "file:///etc/passwd" });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
 check("B6: malformed URL rejected safely (no throw)", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: "not a url at all" });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
 check("B7: empty/null source URL treated as absent", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i1", sourceUrl: null });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
-check("B8: no sources at all -> internal fallback", () => {
+check("B8: no sources at all -> unavailable", () => {
   const item = makeItem({ id: "i1" });
-  assert.equal(resolveResumeTarget(item, []).kind, "internal");
+  assert.equal(resolveResumeTarget(item, []).kind, "unavailable");
 });
 check("B9: multiple sources -> most recently seen wins", () => {
   const item = makeItem({ id: "i1" });
@@ -415,51 +481,51 @@ check("B10: identical lastSeenAt -> deterministic id tie-break, stable across ca
   assert.equal(first.url, "https://a.example/x", "lower id wins the tie deterministically");
   assert.equal(second.url, first.url, "input order must not change the outcome");
 });
-check("B11: internal fallback when no safe resume source exists at all", () => {
+check("B11: unavailable when no safe resume source exists at all", () => {
   const item = makeItem({ id: "i1", type: "movie" });
-  assert.deepEqual(resolveResumeTarget(item, []), { kind: "internal", url: "/library/i1" });
+  assert.deepEqual(resolveResumeTarget(item, []), { kind: "unavailable", reason: "no-target" });
 });
 check("B12 (§74): catalogSource.provider = 'anilist' is never treated as a resume source — no url field exists on it, and it plays no role in resolution at all", () => {
   const item = makeItem({ id: "i1", type: "anime", catalogSource: { provider: "anilist", externalId: "123" } });
   const result = resolveResumeTarget(item, []);
-  assert.equal(result.kind, "internal", "an AniList catalog identity must never become https://anilist.co/... or any other synthesized URL");
+  assert.equal(result.kind, "unavailable", "an AniList catalog identity must never become https://anilist.co/... or any other synthesized URL");
 });
 check("B13 (§74): catalogSource.provider = 'open-library' likewise never becomes a resume URL", () => {
   const item = makeItem({ id: "i1", type: "novel", catalogSource: { provider: "open-library", externalId: "OL123" } });
-  assert.equal(resolveResumeTarget(item, []).kind, "internal");
+  assert.equal(resolveResumeTarget(item, []).kind, "unavailable");
 });
 check("B14: a source linked to a DIFFERENT item is never eligible", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: "i2", sourceUrl: "https://mangadex.org/title/abc" });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
 check("B15: an unlinked source (libraryItemId null) is never eligible", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ libraryItemId: null, sourceUrl: "https://mangadex.org/title/abc" });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable");
 });
 check("B16: extension-created source (adapterId universal-reader-like) is eligible on equal footing — this is a UNIVERSAL hub, no catalog-provider requirement", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({ id: "ext-1", adapterId: "universal-reader", libraryItemId: "i1", sourceUrl: "https://novelphoenix.com/novel/x" });
   const result = resolveResumeTarget(item, [source]);
-  assert.equal(result.kind, "external");
+  assert.equal(result.kind, "direct");
   assert.equal(result.sourceLabel, "NovelPhoenix", "known hostname label wins when the adapter itself has no display name");
 });
 check("B17: LibraryItem's own sourceUrl used only when no TrackingSource is eligible", () => {
   const item = makeItem({ id: "i1", type: "manga", sourceUrl: "https://myanimelist.net/manga/1" });
   const result = resolveResumeTarget(item, []);
-  assert.equal(result.kind, "external");
+  assert.equal(result.kind, "canonical_url");
   assert.equal(result.url, "https://myanimelist.net/manga/1");
   assert.equal(result.sourceLabel, undefined, "no adapter identity behind an item's own stored URL — never fabricate one");
 });
 check("B18: LibraryItem's own sourceUrl is validated exactly like any other external target", () => {
   const item = makeItem({ id: "i1", type: "manga", sourceUrl: "javascript:alert(1)" });
-  assert.equal(resolveResumeTarget(item, []).kind, "internal");
+  assert.equal(resolveResumeTarget(item, []).kind, "unavailable");
 });
 check("B19: Website item's own url field is the candidate, not sourceUrl", () => {
   const item = makeItem({ id: "i1", type: "website", url: "https://example.com" });
   const result = resolveResumeTarget(item, []);
-  assert.equal(result.kind, "external");
+  assert.equal(result.kind, "canonical_url");
   assert.equal(result.url, "https://example.com");
 });
 check("B20: a TrackingSource with an unsafe URL is skipped in favor of the next-best eligible one, not an immediate internal fallback", () => {
@@ -526,14 +592,14 @@ check("B25 (§8.D): sourceUrl safe, workUrl malformed -> sourceUrl wins", () => 
   });
   assert.equal(resolveResumeTarget(item, [source]).url, "https://reader.example.com/chapter/12");
 });
-check("B26 (§8.E): sourceUrl unsafe, workUrl a valid but unrelated https host -> workUrl is NOT used as a substitute trust anchor; falls to internal since no other source exists", () => {
+check("B26 (§8.E): sourceUrl unsafe, workUrl a valid but unrelated https host -> workUrl is NOT used as a substitute trust anchor; falls to unavailable since no other source exists", () => {
   const item = makeItem({ id: "i1" });
   const source = makeSource({
     libraryItemId: "i1",
     sourceUrl: "javascript:evil()",
     lastDetectedMetadata: { workUrl: "https://unrelated.example/path" },
   });
-  assert.equal(resolveResumeTarget(item, [source]).kind, "internal", "an unsafe sourceUrl gives workUrl nothing to prove itself against");
+  assert.equal(resolveResumeTarget(item, [source]).kind, "unavailable", "an unsafe sourceUrl gives workUrl nothing to prove itself against");
 });
 check("B27 (§8.F): two sources — the newest has an untrusted cross-host workUrl but a safe sourceUrl; its own safe sourceUrl remains the eligible choice for that source (never internal just because its workUrl was rejected)", () => {
   const item = makeItem({ id: "i1" });
@@ -556,7 +622,7 @@ check("B27 (§8.F): two sources — the newest has an untrusted cross-host workU
 check("B28 (§8.G): credential-bearing URL rejected for both sourceUrl and workUrl", () => {
   const item = makeItem({ id: "i1" });
   const credSourceOnly = makeSource({ id: "s1", libraryItemId: "i1", sourceUrl: "https://user:pass@reader.example.com/x" });
-  assert.equal(resolveResumeTarget(item, [credSourceOnly]).kind, "internal", "a credential-bearing sourceUrl must never become the resume target");
+  assert.equal(resolveResumeTarget(item, [credSourceOnly]).kind, "unavailable", "a credential-bearing sourceUrl must never become the resume target");
 
   const credWorkUrl = makeSource({
     id: "s2",
@@ -575,13 +641,13 @@ check("B29 (§8.H): localhost source+workUrl (dev tracking) continues to work �
   });
   assert.equal(resolveResumeTarget(item, [source]).url, "http://localhost:3000/reader/book");
 });
-check("B30 (§8.I): AniList catalogSource with no TrackingSource/sourceUrl -> internal fallback (re-confirmed under the new trust rule)", () => {
+check("B30 (§8.I): AniList catalogSource with no TrackingSource/sourceUrl -> unavailable (re-confirmed under the new trust rule)", () => {
   const item = makeItem({ id: "i1", type: "anime", catalogSource: { provider: "anilist", externalId: "123" } });
-  assert.equal(resolveResumeTarget(item, []).kind, "internal");
+  assert.equal(resolveResumeTarget(item, []).kind, "unavailable");
 });
-check("B31 (§8.J): Open Library catalogSource with no TrackingSource/sourceUrl -> internal fallback (re-confirmed under the new trust rule)", () => {
+check("B31 (§8.J): Open Library catalogSource with no TrackingSource/sourceUrl -> unavailable (re-confirmed under the new trust rule)", () => {
   const item = makeItem({ id: "i1", type: "novel", catalogSource: { provider: "open-library", externalId: "OL1" } });
-  assert.equal(resolveResumeTarget(item, []).kind, "internal");
+  assert.equal(resolveResumeTarget(item, []).kind, "unavailable");
 });
 check("B32 (§9): the displayed source name/hostname always matches the URL that will actually open — a rejected workUrl's host never leaks into the label", () => {
   const item = makeItem({ id: "i1" });
@@ -704,9 +770,9 @@ check("F2: an item with null activity never appears in Recently Active", () => {
 // ============================================================
 // G — source fetch failure fallback (§80)
 // ============================================================
-check("G1: resolveResumeTarget with an empty sources array (as if the fetch failed/hasn't resolved yet) still returns a usable internal target, never throws", () => {
+check("G1: resolveResumeTarget with an empty sources array (as if the fetch failed/hasn't resolved yet) still returns a safe, well-formed result, never throws — Stage 41 no longer fabricates an internal-link URL itself (the caller decides what, if anything, to show for 'unavailable')", () => {
   const item = makeItem({ id: "i1" });
-  assert.deepEqual(resolveResumeTarget(item, []), { kind: "internal", url: "/library/i1" });
+  assert.deepEqual(resolveResumeTarget(item, []), { kind: "unavailable", reason: "no-target" });
 });
 
 // ============================================================
@@ -745,6 +811,58 @@ check("H5: countActiveWithinDays excludes an item just past the window", () => {
   const items = [makeItem({ id: "old" })];
   const summary = new Map([["old", daysAgo(8)]]);
   assert.equal(countActiveWithinDays(items, summary, 7, NOW), 0);
+});
+
+// ============================================================
+// I — Stage 41 correction: selectContinueSource's manual-vs-detected
+// recency distinction. See lib/resume.ts's own doc comment for the full
+// finding. Full Stage 41 action-label/chooser/media-type matrix lives in
+// scripts/verify-resume-engine.mjs — these checks only cover the change
+// to resolveResumeTarget ITSELF, which this file already owns.
+// ============================================================
+check("I1 (CRITICAL): a single manual source is still a safe DIRECT target — only 2+ sources trigger the ambiguity guard", () => {
+  const item = makeItem({ id: "i1" });
+  const source = makeSource({ adapterId: "manual", libraryItemId: "i1", sourceUrl: "https://example.com/x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  const result = resolveResumeTarget(item, [source]);
+  assert.equal(result.kind, "direct");
+  assert.equal(result.url, "https://example.com/x");
+});
+check("I2 (CRITICAL): a brand-new manual source + an older extension source -> choose_source, never silently pick the manual one just because its last_seen_at is newer", () => {
+  const item = makeItem({ id: "i1" });
+  const oldExtension = makeSource({ id: "ext-1", adapterId: "mangadex", libraryItemId: "i1", sourceUrl: "https://mangadex.org/title/x", lastSeenAt: "2026-01-01T00:00:00.000Z" });
+  const freshManual = makeSource({ id: "man-1", adapterId: "manual", libraryItemId: "i1", sourceUrl: "https://example.com/x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  const result = resolveResumeTarget(item, [oldExtension, freshManual]);
+  assert.equal(result.kind, "choose_source", "a freshly-ADDED manual source must never be mistaken for a freshly-CONSUMED one");
+  assert.equal(result.sources.length, 2);
+});
+check("I3: two manual sources (no extension source at all) -> choose_source, never 'most recently added' passed off as a consumption signal", () => {
+  const item = makeItem({ id: "i1" });
+  const a = makeSource({ id: "man-a", adapterId: "manual", libraryItemId: "i1", sourceUrl: "https://a.example/x", lastSeenAt: "2026-01-01T00:00:00.000Z" });
+  const b = makeSource({ id: "man-b", adapterId: "manual", libraryItemId: "i1", sourceUrl: "https://b.example/x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  assert.equal(resolveResumeTarget(item, [a, b]).kind, "choose_source");
+});
+check("I4: multiple EXTENSION-only sources (no manual source in the set) still resolve DIRECT — unchanged from the pre-Stage-41 behavior, since every last_seen_at genuinely reflects a real detection", () => {
+  const item = makeItem({ id: "i1" });
+  const older = makeSource({ id: "ext-old", adapterId: "mangadex", libraryItemId: "i1", sourceUrl: "https://mangadex.org/title/x", lastSeenAt: "2026-01-01T00:00:00.000Z" });
+  const newer = makeSource({ id: "ext-new", adapterId: "markly-test-reader", libraryItemId: "i1", sourceUrl: "https://reader.example.com/x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  const result = resolveResumeTarget(item, [older, newer]);
+  assert.equal(result.kind, "direct");
+  assert.equal(result.url, "https://reader.example.com/x");
+});
+check("I5: choose_source's own sources array is ordered by recency (display order), even though that recency wasn't trusted enough to auto-pick", () => {
+  const item = makeItem({ id: "i1" });
+  const oldExtension = makeSource({ id: "ext-1", adapterId: "mangadex", libraryItemId: "i1", sourceUrl: "https://mangadex.org/title/x", lastSeenAt: "2026-01-01T00:00:00.000Z" });
+  const freshManual = makeSource({ id: "man-1", adapterId: "manual", libraryItemId: "i1", sourceUrl: "https://example.com/x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  const result = resolveResumeTarget(item, [oldExtension, freshManual]);
+  assert.equal(result.sources[0].sourceId, "man-1", "still shown most-recent-first — only the SILENT auto-pick requires the stronger guarantee");
+});
+check("I6: choose_source is skipped entirely (falls through to a manual source's own eligibility) when the manual source is unsafe — an ineligible source is never counted toward the ambiguity check", () => {
+  const item = makeItem({ id: "i1" });
+  const unsafeManual = makeSource({ id: "man-1", adapterId: "manual", libraryItemId: "i1", sourceUrl: "javascript:x", lastSeenAt: "2026-06-01T00:00:00.000Z" });
+  const extension = makeSource({ id: "ext-1", adapterId: "mangadex", libraryItemId: "i1", sourceUrl: "https://mangadex.org/title/x", lastSeenAt: "2026-01-01T00:00:00.000Z" });
+  const result = resolveResumeTarget(item, [unsafeManual, extension]);
+  assert.equal(result.kind, "direct", "the unsafe manual source is filtered out before eligibility is even counted, leaving only one real candidate");
+  assert.equal(result.url, "https://mangadex.org/title/x");
 });
 
 // ============================================================
