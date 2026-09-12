@@ -389,7 +389,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const detectedFallback: DetectedFallback | undefined = addLinkSource
     ? {
         title: addLinkSource.sourceTitle,
-        sourceLabel: getSourceDisplayName(addLinkSource.adapterId, addLinkSource.sourceUrl),
+        sourceLabel: getSourceDisplayName(addLinkSource.adapterId, addLinkSource.sourceUrl, addLinkSource.sourceTitle),
         progressLabel: addLinkSource.lastDetectedProgress ? formatSourceProgress(addLinkSource.lastDetectedProgress) : undefined,
         coverUrl: addLinkSource.lastDetectedMetadata?.coverUrl,
         onAddAndTrack: handleAddDetectedWork,
@@ -528,7 +528,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                           <li key={source.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-3 py-2.5">
                             <div className="min-w-0">
                               <p className="truncate text-sm text-foreground">
-                                {getSourceDisplayName(source.adapterId, source.sourceUrl)}
+                                {getSourceDisplayName(source.adapterId, source.sourceUrl, source.sourceTitle)}
                                 {hostname && <span className="text-muted-foreground"> · {hostname}</span>}
                               </p>
                               <p className="text-xs text-muted-foreground">
@@ -549,7 +549,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                                 </a>
                               )}
                               <SourceActionsMenu
-                                label={getSourceDisplayName(source.adapterId, source.sourceUrl)}
+                                label={getSourceDisplayName(source.adapterId, source.sourceUrl, source.sourceTitle)}
                                 autoTrackEnabled={source.autoTrackEnabled}
                                 busy={busy === `toggle-${source.id}` || busy === `unlink-${source.id}`}
                                 onToggleAutoTrack={() => toggleAutoTrack(source.id, !source.autoTrackEnabled)}
@@ -581,6 +581,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                           <div className="min-w-0">
                             <p className="truncate text-sm text-foreground">{source.sourceTitle}</p>
                             <p className="text-xs text-muted-foreground">
+                              {/* sourceTitle is already the primary text above — omit it here (2-arg call) so the adapter/hostname label doesn't just repeat it */}
                               {getSourceDisplayName(source.adapterId, source.sourceUrl)} · {ITEM_TYPE_LABELS[source.mediaType]} ·{" "}
                               {formatSourceProgress(source.lastDetectedProgress)} · Seen {formatRelativeTime(source.lastSeenAt)}
                             </p>

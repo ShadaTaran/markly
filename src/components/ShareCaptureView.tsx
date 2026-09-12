@@ -45,6 +45,8 @@ type Step =
   /** A URL was supplied (explicitly, or as the sole text-derived candidate) but failed validation — never conflated with "missing" (Stage 39 correction §1/§3). */
   | { kind: "invalid" }
   | { kind: "existing-item"; item: LibraryItem }
+  /** Stage 40 §20/§22 — shown after a NEW media item is created through the share flow, only when there's a URL that isn't already the item's own field. Explicit opt-in only; skipping leaves the item exactly as created. */
+  | { kind: "link-source-prompt"; itemId: string; url: string }
   | { kind: "review" }
   | { kind: "pickType" }
   | { kind: "search"; itemType: SupportedItemType }
@@ -96,6 +98,8 @@ export function ShareCaptureView({ sharedUrl, sharedTitle, sharedText }: ShareCa
   const [pastedUrl, setPastedUrl] = useState("");
   const [pasteError, setPasteError] = useState<string | undefined>();
   const [resolvedPasteUrl, setResolvedPasteUrl] = useState<string | null>(null);
+  const [linkSourceBusy, setLinkSourceBusy] = useState(false);
+  const [linkSourceNotice, setLinkSourceNotice] = useState<string | undefined>();
 
   const effectiveUrl = resolvedPasteUrl ?? (shareResult.status === "valid" ? shareResult.url : null);
 
@@ -164,7 +168,43 @@ export function ShareCaptureView({ sharedUrl, sharedTitle, sharedText }: ShareCa
 
   function handleSubmitMedia(itemType: SupportedItemType, values: MediaItemInput) {
     const item = library.addMedia(itemType as MediaItem["type"], values);
+    // Stage 40 §22 — item creation and source linking are never one atomic
+    // step: the item is already safely created at this point regardless of
+    // what happens next. If there's a shared URL worth offering as a
+    // source, ask explicitly instead of attaching it silently or
+    // navigating straight past the opportunity.
+    if (effectiveUrl && userId) {
+      setStep({ kind: "link-source-prompt", itemId: item.id, url: effectiveUrl });
+      return;
+    }
     router.push(`/library/${item.id}`);
+  }
+
+  /**
+   * Stage 40 §22 — explicit-only: called from a real button click, never
+   * automatically. On failure, the already-created LibraryItem is left
+   * exactly as-is (never rolled back/deleted client-side) — the user can
+   * still reach it and retry adding a source from its own detail page.
+   */
+  async function handleLinkSource(itemId: string, url: string) {
+    setLinkSourceBusy(true);
+    setLinkSourceNotice(undefined);
+    try {
+      const response = await fetch("/api/tracking-sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ libraryItemId: itemId, url }),
+      });
+      if (!response.ok) throw new Error("failed");
+    } catch {
+      // Non-blocking: the item already exists safely; report and let the
+      // user retry from the item's own Sources section instead of getting
+      // stuck on this confirmation screen.
+      setLinkSourceNotice("Couldn't link that source. You can add it later from the item's Sources section.");
+      setLinkSourceBusy(false);
+      return;
+    }
+    router.push(`/library/${itemId}`);
   }
 
   function handlePasteContinue() {
@@ -247,16 +287,50 @@ export function ShareCaptureView({ sharedUrl, sharedTitle, sharedText }: ShareCa
   }
 
   if (activeStep.kind === "existing-item") {
+    // Stage 40 §21 — the shared URL may be worth linking as a first-class,
+    // manageable Source even though it already resolved to an existing
+    // item (e.g. it matched via catalog identity, not this exact URL).
+    // Website items have no Sources concept at all (Section 57 — a
+    // website's own `url` already IS its one destination).
+    const offerLinkSource = !isWebsite(activeStep.item) && Boolean(effectiveUrl) && Boolean(userId);
     return (
       <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
         <h2 className="text-base font-semibold text-foreground">You already have this</h2>
         <p className="mt-1.5 truncate text-sm text-muted-foreground">{activeStep.item.title}</p>
+        {linkSourceNotice && <p className="mt-2 text-xs text-muted-foreground">{linkSourceNotice}</p>}
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="secondary" onClick={handleCancel}>
             Cancel
           </Button>
+          {offerLinkSource && (
+            <Button
+              variant="secondary"
+              disabled={linkSourceBusy}
+              onClick={() => effectiveUrl && handleLinkSource(activeStep.item.id, effectiveUrl)}
+            >
+              {linkSourceBusy ? "Linking…" : "Link this source"}
+            </Button>
+          )}
           <Button variant="primary" onClick={() => router.push(`/library/${activeStep.item.id}`)}>
             Open existing item
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeStep.kind === "link-source-prompt") {
+    return (
+      <div className="rounded-lg border border-border bg-surface p-4 sm:p-5">
+        <h2 className="text-base font-semibold text-foreground">Link this page as a source?</h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">You can always add or remove sources later from this item&rsquo;s page.</p>
+        {linkSourceNotice && <p className="mt-2 text-xs text-muted-foreground">{linkSourceNotice}</p>}
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button variant="secondary" disabled={linkSourceBusy} onClick={() => router.push(`/library/${activeStep.itemId}`)}>
+            Skip
+          </Button>
+          <Button variant="primary" disabled={linkSourceBusy} onClick={() => handleLinkSource(activeStep.itemId, activeStep.url)}>
+            {linkSourceBusy ? "Linking…" : "Link source"}
           </Button>
         </div>
       </div>

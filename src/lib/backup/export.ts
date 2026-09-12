@@ -1,8 +1,9 @@
 import type { ActivityEvent } from "@/types/activity";
 import type { Collection } from "@/types/collection";
 import type { LibraryItem, MediaItem } from "@/types/library-item";
-import type { BackupActivityEvent, BackupCollection, BackupLibraryItem, MarklyBackupV1 } from "@/types/backup";
+import type { BackupActivityEvent, BackupCollection, BackupLibraryItem, BackupTrackingSource, MarklyBackupV1 } from "@/types/backup";
 import { BACKUP_FORMAT, BACKUP_VERSION } from "@/types/backup";
+import type { ExportableTrackingSource } from "@/lib/cloud/backup";
 import { isMediaItem } from "@/lib/item-detail";
 import { generateId } from "@/lib/utils";
 import { isValidMarklyBackup } from "@/lib/backup/validate";
@@ -21,6 +22,14 @@ import { isValidMarklyBackup } from "@/lib/backup/validate";
  * it is never treated as proof of identity on import, which always
  * remaps to freshly-created ids regardless.
  *
+ * `trackingSources` (Stage 40 data-integrity correction) is optional and
+ * defaults to `[]` — local mode always calls this with nothing (tracking_
+ * sources has no local/signed-out representation; see BackupSettingsPanel),
+ * while cloud mode passes rows already fetched via `fetchTrackingSourcesForExport`.
+ * Each row's `library_item_id` is reused directly as its `backupItemId`,
+ * exactly like LibraryItem's own id above — the fetch already scoped this
+ * to rows that ARE linked to one.
+ *
  * Export consistency: cloud mode fetches items/collections/activity as
  * three independent queries (see lib/cloud/backup.ts), not one
  * transactional snapshot. Considered and rejected building a server-side
@@ -35,7 +44,12 @@ import { isValidMarklyBackup } from "@/lib/backup/validate";
  * corruption, never a wrong-owner write. That's an acceptable trade-off
  * for avoiding SQL that isn't otherwise needed.
  */
-export function buildBackup(items: LibraryItem[], collections: Collection[], events: ActivityEvent[]): MarklyBackupV1 {
+export function buildBackup(
+  items: LibraryItem[],
+  collections: Collection[],
+  events: ActivityEvent[],
+  trackingSourceRows: ExportableTrackingSource[] = [],
+): MarklyBackupV1 {
   const libraryItems: BackupLibraryItem[] = items.map(toBackupLibraryItem);
   const backupCollections: BackupCollection[] = collections.map((collection) => ({
     backupCollectionId: collection.id,
@@ -45,13 +59,33 @@ export function buildBackup(items: LibraryItem[], collections: Collection[], eve
     itemIds: collection.itemIds,
   }));
   const activityEvents: BackupActivityEvent[] = events.map(toBackupActivityEvent);
+  // A row with no source_url at all (possible for some extension
+  // detections — see ExportableTrackingSource's own doc comment) has
+  // nothing left worth restoring, matching validateTrackingSource's own
+  // reasoning for dropping such a record — filtered out here rather than
+  // exported as a phantom empty-URL record that would just get silently
+  // dropped again on the next import anyway.
+  const trackingSources: BackupTrackingSource[] = trackingSourceRows.filter((row) => row.source_url).map(toBackupTrackingSource);
 
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     backupId: generateId(),
-    data: { libraryItems, collections: backupCollections, activityEvents },
+    data: { libraryItems, collections: backupCollections, activityEvents, trackingSources },
+  };
+}
+
+function toBackupTrackingSource(row: ExportableTrackingSource): BackupTrackingSource {
+  return {
+    backupItemId: row.library_item_id,
+    adapterId: row.adapter_id,
+    sourceKey: row.source_key,
+    sourceTitle: row.source_title,
+    sourceUrl: row.source_url ?? "",
+    autoTrackEnabled: row.auto_track_enabled,
+    suppressed: row.auto_link_suppressed_at !== null,
+    lastSeenAt: row.last_seen_at,
   };
 }
 
@@ -173,7 +207,12 @@ export interface BuildAndValidateResult {
  * a real bug, not a data problem — so the caller should treat `ok: false`
  * as "do not download, something is wrong," never as a user data issue.
  */
-export function buildAndValidateBackup(items: LibraryItem[], collections: Collection[], events: ActivityEvent[]): BuildAndValidateResult {
-  const backup = buildBackup(items, collections, events);
+export function buildAndValidateBackup(
+  items: LibraryItem[],
+  collections: Collection[],
+  events: ActivityEvent[],
+  trackingSourceRows: ExportableTrackingSource[] = [],
+): BuildAndValidateResult {
+  const backup = buildBackup(items, collections, events, trackingSourceRows);
   return { ok: isValidMarklyBackup(backup), backup };
 }

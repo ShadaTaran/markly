@@ -119,7 +119,7 @@ export function resolveResumeTarget(item: LibraryItem, trackingSources: readonly
         // §9). getSafeOpenSourceUrl's own trust invariant already
         // guarantees `url` shares sourceUrl's host whenever it's workUrl,
         // so this is never a behavior change, only a stronger guarantee.
-        sourceLabel: getSourceDisplayName(best.adapterId, url),
+        sourceLabel: getSourceDisplayName(best.adapterId, url, best.sourceTitle),
         hostname: getSourceHostname(url) ?? undefined,
       };
     }

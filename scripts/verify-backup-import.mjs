@@ -77,8 +77,13 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATION_0014_PATH = path.join(REPO_ROOT, "supabase", "migrations", "0014_stage29_backup_import_fix.sql");
+const MIGRATION_0018_PATH = path.join(REPO_ROOT, "supabase", "migrations", "0018_stage40_backup_item_map.sql");
+const MIGRATIONS_DIR = path.join(REPO_ROOT, "supabase", "migrations");
 function read0014() {
   return fs.readFileSync(MIGRATION_0014_PATH, "utf8");
+}
+function read0018() {
+  return fs.readFileSync(MIGRATION_0018_PATH, "utf8");
 }
 
 const results = [];
@@ -105,6 +110,11 @@ const MAX_COLLECTION_NAME_LENGTH = 200;
 const MAX_URL_LENGTH = 2000;
 const MAX_STRING_ARRAY_LENGTH = 50;
 const MAX_STRING_ARRAY_ITEM_LENGTH = 100;
+// Stage 40 data-integrity correction
+const MAX_TRACKING_SOURCES = 20000;
+const MAX_ADAPTER_ID_LENGTH = 100;
+const MAX_SOURCE_KEY_LENGTH = MAX_URL_LENGTH;
+const MAX_SOURCE_TITLE_LENGTH = 200;
 
 // Local-mode's PRE-EXISTING persisted-history cap, reproduced from
 // lib/activity-storage.ts's MAX_ACTIVITY_EVENTS. Deliberately a separate
@@ -315,6 +325,33 @@ function validateActivityEvent(raw, validItemIds) {
   }
 }
 
+// ============================================================
+// validateTrackingSource, reproduced from lib/backup/validate.ts (Stage
+// 40 data-integrity correction). Drops the whole record on any structural
+// or URL-safety problem — unlike LibraryItem's per-field clamping, a
+// source with no valid safe URL has nothing left worth restoring.
+// ============================================================
+function validateTrackingSource(raw, validItemIds, exportedAt) {
+  if (!isPlainObject(raw)) return null;
+  const backupItemId = raw.backupItemId;
+  if (typeof backupItemId !== "string" || !validItemIds.has(backupItemId)) return null;
+  if (!isNonEmptyString(raw.adapterId, MAX_ADAPTER_ID_LENGTH)) return null;
+  if (!isNonEmptyString(raw.sourceKey, MAX_SOURCE_KEY_LENGTH)) return null;
+  if (!isNonEmptyString(raw.sourceTitle, MAX_SOURCE_TITLE_LENGTH)) return null;
+  const sourceUrl = normalizeUrlField(raw.sourceUrl);
+  if (!sourceUrl) return null;
+  return {
+    backupItemId,
+    adapterId: raw.adapterId,
+    sourceKey: raw.sourceKey,
+    sourceTitle: raw.sourceTitle,
+    sourceUrl,
+    autoTrackEnabled: raw.autoTrackEnabled === true,
+    suppressed: raw.suppressed === true,
+    lastSeenAt: isValidIsoDate(raw.lastSeenAt) ? raw.lastSeenAt : exportedAt,
+  };
+}
+
 function validateBackupObject(raw) {
   if (!isPlainObject(raw) || raw.format !== BACKUP_FORMAT) return { ok: false, reason: "wrong_format", message: "Not a Markly backup." };
   if (typeof raw.version !== "number" || !Number.isInteger(raw.version) || raw.version < 1) return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
@@ -322,14 +359,27 @@ function validateBackupObject(raw) {
   if (!isValidIsoDate(raw.exportedAt)) return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
   if (!isPlainObject(raw.data)) return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
 
-  const { libraryItems: ri, collections: rc, activityEvents: ra } = raw.data;
-  if ((ri !== undefined && !Array.isArray(ri)) || (rc !== undefined && !Array.isArray(rc)) || (ra !== undefined && !Array.isArray(ra))) {
+  const { libraryItems: ri, collections: rc, activityEvents: ra, trackingSources: rt } = raw.data;
+  if (
+    (ri !== undefined && !Array.isArray(ri)) ||
+    (rc !== undefined && !Array.isArray(rc)) ||
+    (ra !== undefined && !Array.isArray(ra)) ||
+    (rt !== undefined && !Array.isArray(rt))
+  ) {
     return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
   }
   const itemsArray = Array.isArray(ri) ? ri : [];
   const collectionsArray = Array.isArray(rc) ? rc : [];
   const activityArray = Array.isArray(ra) ? ra : [];
-  if (itemsArray.length > MAX_LIBRARY_ITEMS || collectionsArray.length > MAX_COLLECTIONS || activityArray.length > MAX_ACTIVITY_EVENTS) {
+  // Absent entirely (any pre-Stage-40 backup) is a valid, ordinary empty
+  // array — never a reason to reject the file.
+  const trackingSourcesArray = Array.isArray(rt) ? rt : [];
+  if (
+    itemsArray.length > MAX_LIBRARY_ITEMS ||
+    collectionsArray.length > MAX_COLLECTIONS ||
+    activityArray.length > MAX_ACTIVITY_EVENTS ||
+    trackingSourcesArray.length > MAX_TRACKING_SOURCES
+  ) {
     return { ok: false, reason: "too_many_records", message: "This backup is too large to import." };
   }
 
@@ -365,13 +415,29 @@ function validateBackupObject(raw) {
     else skippedActivity++;
   }
 
+  const trackingSources = [];
+  let skippedTrackingSources = 0;
+  for (const r of trackingSourcesArray) {
+    const s = validateTrackingSource(r, validItemIds, raw.exportedAt);
+    if (s) trackingSources.push(s);
+    else skippedTrackingSources++;
+  }
+
   if (itemsArray.length > 0 && libraryItems.length === 0) {
     return { ok: false, reason: "malformed_root", message: "This backup is damaged or contains invalid data." };
   }
 
   return {
     ok: true,
-    backup: { exportedAt: raw.exportedAt, backupId: typeof raw.backupId === "string" ? raw.backupId : "", libraryItems, collections, activityEvents, skipped: { libraryItems: skippedItems, collections: skippedCollections, activityEvents: skippedActivity } },
+    backup: {
+      exportedAt: raw.exportedAt,
+      backupId: typeof raw.backupId === "string" ? raw.backupId : "",
+      libraryItems,
+      collections,
+      activityEvents,
+      trackingSources,
+      skipped: { libraryItems: skippedItems, collections: skippedCollections, activityEvents: skippedActivity, trackingSources: skippedTrackingSources },
+    },
   };
 }
 
@@ -953,8 +1019,9 @@ check("B5: cloud-mode Activity import is never local-capacity-limited — only l
 });
 
 // ============================================================
-// C/D/E — cloud RPC control-flow model (0013 deployed + 0014 fixes,
-// 0014 itself NOT deployed — algorithm only)
+// C/D/E — cloud RPC control-flow model (0013 and 0014 both deployed —
+// see this file's own closing note; algorithm only, not a substitute for
+// live database testing)
 // ============================================================
 function makeDb() {
   // importRequests keys are "userId:requestId" — reproducing 0013's fixed
@@ -1098,7 +1165,17 @@ function importLibraryBackupModel(db, userId, requestId, plan) {
     activityCreated++;
   }
 
-  return { status: "imported", itemsCreated, itemsReused, collectionsCreated, collectionsReused, activityCreated };
+  // Migration 0018 — the ONLY additive change to this model's return
+  // value: expose the very same `itemMap` this function already built
+  // and used internally for memberships/Activity above (never recomputed,
+  // never derived by title/type), as a deterministically-ordered plain
+  // array — mirroring `order by backup_item_id` inside the real
+  // migration's `jsonb_agg`.
+  const itemMapArray = [...itemMap.entries()]
+    .map(([backupItemId, { realId, wasCreated }]) => ({ backupItemId, realItemId: realId, wasCreated }))
+    .sort((a, b) => (a.backupItemId < b.backupItemId ? -1 : a.backupItemId > b.backupItemId ? 1 : 0));
+
+  return { status: "imported", itemsCreated, itemsReused, collectionsCreated, collectionsReused, activityCreated, itemMap: itemMapArray };
 }
 
 check("C1: double-submit — the same request id is rejected the second time, no duplicate rows", () => {
@@ -1406,6 +1483,470 @@ check("F5: a backup with NO duplicates (same title, DIFFERENT ids) is unaffected
   const r = validateBackupObject(raw);
   assert.equal(r.ok, true, "two DIFFERENT ids are never ambiguous, even with identical titles — that's a separate (title-matching) concern, not this structural check");
   assert.equal(r.backup.libraryItems.length, 2);
+});
+
+// ============================================================
+// Tests T — Stage 40 data-integrity correction: TrackingSources become
+// first-class backed-up, restorable user data. Section T1-T6 exercise
+// validateBackupObject's new trackingSources handling (reproduced above);
+// T7+ model restoreTrackingSource's (lib/extension/tracking-sources.ts)
+// create-or-link-or-conflict identity resolution against a simple
+// in-memory fake tracking_sources/library_items table, the same
+// "reproduce the real function's control flow as a fast JS model"
+// convention every other RPC-adjacent script in this directory already
+// uses (verify-smart-auto-link.mjs, verify-source-management.mjs, ...).
+// ============================================================
+
+const TRACKABLE_MEDIA_TYPES = new Set(["anime", "manga", "novel", "game", "movie", "series"]);
+
+/** Reproduces toBackupTrackingSource (lib/backup/export.ts). */
+function toBackupTrackingSource(row) {
+  return {
+    backupItemId: row.library_item_id,
+    adapterId: row.adapter_id,
+    sourceKey: row.source_key,
+    sourceTitle: row.source_title,
+    sourceUrl: row.source_url ?? "",
+    autoTrackEnabled: row.auto_track_enabled,
+    suppressed: row.auto_link_suppressed_at !== null,
+    lastSeenAt: row.last_seen_at,
+  };
+}
+
+/**
+ * Reproduces restoreTrackingSource's control flow against an in-memory
+ * fake `{ libraryItems: [{id,user_id,type}], trackingSources: [{id,user_id,library_item_id,adapter_id,source_key,source_url,auto_link_suppressed_at}] }`.
+ * Mutates `db.trackingSources` on create/link, exactly like the real
+ * function mutates the real table.
+ */
+function restoreTrackingSourceModel(db, userId, libraryItemId, adapterId, sourceKey, sourceTitle, sourceUrl, autoTrackEnabled, suppressed) {
+  const item = db.libraryItems.find((i) => i.id === libraryItemId && i.user_id === userId);
+  if (!item) return { status: "item-not-found" };
+  if (!TRACKABLE_MEDIA_TYPES.has(item.type)) return { status: "unsupported-item-type" };
+
+  const sameUrlRows = db.trackingSources.filter((s) => s.user_id === userId && s.source_url === sourceUrl);
+  const sameItemCrossAdapter = sameUrlRows.find((s) => s.library_item_id === libraryItemId);
+  if (sameItemCrossAdapter) return { status: "already-linked" };
+  const otherItemCrossAdapter = sameUrlRows.find((s) => s.library_item_id !== null && s.library_item_id !== libraryItemId);
+  if (otherItemCrossAdapter) return { status: "conflict", conflictingLibraryItemId: otherItemCrossAdapter.library_item_id };
+
+  const existing = db.trackingSources.find((s) => s.user_id === userId && s.adapter_id === adapterId && s.source_key === sourceKey);
+  if (existing) {
+    if (existing.library_item_id === libraryItemId) return { status: "already-linked" };
+    if (existing.library_item_id) return { status: "conflict", conflictingLibraryItemId: existing.library_item_id };
+    if (existing.auto_link_suppressed_at) return { status: "suppressed-elsewhere" };
+    existing.library_item_id = libraryItemId;
+    existing.auto_link_suppressed_at = null;
+    return { status: "linked" };
+  }
+
+  db.trackingSources.push({
+    id: `ts-${db.trackingSources.length + 1}`,
+    user_id: userId,
+    library_item_id: libraryItemId,
+    adapter_id: adapterId,
+    source_key: sourceKey,
+    source_title: sourceTitle,
+    source_url: sourceUrl,
+    auto_track_enabled: autoTrackEnabled,
+    auto_link_suppressed_at: suppressed ? "2026-01-01T00:00:00.000Z" : null,
+  });
+  return { status: "created" };
+}
+
+check("T1: a trackingSources record round-trips every preserved field exactly (adapterId, sourceKey, sourceTitle/label, sourceUrl, autoTrackEnabled, suppressed)", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "Solo Leveling", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [{ backupItemId: "i1", adapterId: "manual", sourceKey: "https://mangadex.org/title/x", sourceTitle: "MangaDex", sourceUrl: "https://mangadex.org/title/x", autoTrackEnabled: true, suppressed: false, lastSeenAt: "2026-02-01T00:00:00.000Z" }],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.ok, true);
+  assert.equal(r.backup.trackingSources.length, 1);
+  const s = r.backup.trackingSources[0];
+  assert.equal(s.backupItemId, "i1");
+  assert.equal(s.adapterId, "manual");
+  assert.equal(s.sourceKey, "https://mangadex.org/title/x");
+  assert.equal(s.sourceTitle, "MangaDex");
+  assert.equal(s.sourceUrl, "https://mangadex.org/title/x");
+  assert.equal(s.autoTrackEnabled, true);
+  assert.equal(s.suppressed, false);
+  assert.equal(s.lastSeenAt, "2026-02-01T00:00:00.000Z");
+});
+
+check("T2: suppression state (suppressed: true) round-trips — a restore must never silently resurrect tracking the user explicitly rejected", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [{ backupItemId: "i1", adapterId: "manual", sourceKey: "https://a.example/x", sourceTitle: "A", sourceUrl: "https://a.example/x", autoTrackEnabled: false, suppressed: true, lastSeenAt: "2026-01-01T00:00:00.000Z" }],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.backup.trackingSources[0].suppressed, true);
+});
+
+check("T3 (CRITICAL): a javascript: source URL is rejected — the whole source record is dropped, never restored as a clickable link", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [{ backupItemId: "i1", adapterId: "manual", sourceKey: "k", sourceTitle: "T", sourceUrl: "javascript:alert(1)", autoTrackEnabled: false, suppressed: false, lastSeenAt: "2026-01-01T00:00:00.000Z" }],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.ok, true, "one bad record drops itself, never the whole file");
+  assert.equal(r.backup.trackingSources.length, 0);
+  assert.equal(r.backup.skipped.trackingSources, 1);
+});
+
+check("T4 (CRITICAL): a credential-bearing source URL (user:pass@host) is rejected the same way", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [{ backupItemId: "i1", adapterId: "manual", sourceKey: "k", sourceTitle: "T", sourceUrl: "https://user:pass@evil.example/x", autoTrackEnabled: false, suppressed: false, lastSeenAt: "2026-01-01T00:00:00.000Z" }],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.backup.trackingSources.length, 0);
+});
+
+check("T5: multiple sources per item all survive validation — one LibraryItem may have many TrackingSources, the Stage 40 core invariant", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [
+        { backupItemId: "i1", adapterId: "mangadex", sourceKey: "manga/1", sourceTitle: "MangaDex", sourceUrl: "https://mangadex.org/title/1", autoTrackEnabled: true, suppressed: false, lastSeenAt: "2026-01-01T00:00:00.000Z" },
+        { backupItemId: "i1", adapterId: "manual", sourceKey: "https://official.example/x", sourceTitle: "Official Site", sourceUrl: "https://official.example/x", autoTrackEnabled: false, suppressed: false, lastSeenAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.backup.trackingSources.length, 2);
+});
+
+check("T6: a source referencing an unresolvable backupItemId (no matching LibraryItem in this file) is dropped, never restored as a dangling reference", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      trackingSources: [{ backupItemId: "does-not-exist", adapterId: "manual", sourceKey: "k", sourceTitle: "T", sourceUrl: "https://a.example/x", autoTrackEnabled: false, suppressed: false, lastSeenAt: "2026-01-01T00:00:00.000Z" }],
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.backup.trackingSources.length, 0);
+});
+
+check("T7 (old-backup compatibility, CRITICAL): a backup with NO trackingSources key at all is a fully valid old backup — restores everything it contains, zero sources, never rejected for missing a section that didn't exist yet", () => {
+  const raw = {
+    format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z",
+    data: {
+      libraryItems: [{ backupItemId: "i1", type: "manga", title: "X", createdAt: "2026-01-01T00:00:00.000Z" }],
+      collections: [], activityEvents: [],
+      // trackingSources deliberately omitted — simulates any backup written before this correction.
+    },
+  };
+  const r = validateBackupObject(raw);
+  assert.equal(r.ok, true);
+  assert.equal(r.backup.libraryItems.length, 1, "everything else in an old backup still restores normally");
+  assert.deepEqual(r.backup.trackingSources, []);
+  assert.equal(r.backup.skipped.trackingSources, 0);
+});
+
+check("T8: no version bump was required for this addition — a pre-Stage-40 backup still declares version 1 and imports fine", () => {
+  const raw = { format: BACKUP_FORMAT, version: 1, exportedAt: "2026-01-01T00:00:00.000Z", data: { libraryItems: [], collections: [], activityEvents: [] } };
+  assert.equal(validateBackupObject(raw).ok, true);
+});
+
+check("T9: toBackupTrackingSource never includes id/user_id/library_item_id (the raw database id) or any RLS-internal field — only backupItemId, a backup-local reference", () => {
+  const exported = toBackupTrackingSource({
+    library_item_id: "real-db-id-123", adapter_id: "manual", source_key: "https://a.example/x", source_title: "A",
+    source_url: "https://a.example/x", auto_track_enabled: true, auto_link_suppressed_at: null, last_seen_at: "2026-01-01T00:00:00.000Z",
+  });
+  const keys = Object.keys(exported);
+  assert.ok(!keys.includes("user_id") && !keys.includes("id"));
+  assert.ok(!("library_item_id" in exported), "the raw database FK must never appear — only backupItemId");
+  assert.equal(exported.backupItemId, "real-db-id-123", "backupItemId reuses the real id directly, same convention as LibraryItem's own backupItemId");
+});
+
+check("T10 (CRITICAL, exact-duplicate/idempotent re-import): restoring the exact same (adapterId, sourceKey) onto the exact same item twice is idempotent — the second call reports already-linked, never a duplicate row", () => {
+  const db = { libraryItems: [{ id: "item-1", user_id: "u1", type: "manga" }], trackingSources: [] };
+  const first = restoreTrackingSourceModel(db, "u1", "item-1", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(first.status, "created");
+  const second = restoreTrackingSourceModel(db, "u1", "item-1", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(second.status, "already-linked");
+  assert.equal(db.trackingSources.length, 1, "re-importing the same backup must never create a second row");
+});
+
+check("T11 (CRITICAL, cross-item conflict): restoring the same identity onto a DIFFERENT item is reported as a conflict, never silently moved", () => {
+  const db = { libraryItems: [{ id: "item-1", user_id: "u1", type: "manga" }, { id: "item-2", user_id: "u1", type: "manga" }], trackingSources: [] };
+  restoreTrackingSourceModel(db, "u1", "item-1", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  const result = restoreTrackingSourceModel(db, "u1", "item-2", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(result.status, "conflict");
+  assert.equal(result.conflictingLibraryItemId, "item-1");
+  assert.equal(db.trackingSources.find((s) => s.source_key === "https://a.example/x").library_item_id, "item-1", "the original link is never moved");
+});
+
+check("T12: restore never links onto a live, independently-suppressed unlinked row — the destination account's own more-recent explicit unlink is respected, not overridden", () => {
+  const db = {
+    libraryItems: [{ id: "item-1", user_id: "u1", type: "manga" }],
+    trackingSources: [{ id: "ts-1", user_id: "u1", library_item_id: null, adapter_id: "mangadex", source_key: "manga/1", source_url: "https://mangadex.org/title/1", auto_link_suppressed_at: "2026-01-01T00:00:00.000Z" }],
+  };
+  const result = restoreTrackingSourceModel(db, "u1", "item-1", "mangadex", "manga/1", "MangaDex", "https://mangadex.org/title/1", true, false);
+  assert.equal(result.status, "suppressed-elsewhere");
+  assert.equal(db.trackingSources[0].library_item_id, null, "must stay unlinked — the live account's own suppression wins");
+});
+
+check("T13: restore DOES link onto a live unlinked row that has no suppression of its own — same-adapter re-detection scenario", () => {
+  const db = {
+    libraryItems: [{ id: "item-1", user_id: "u1", type: "manga" }],
+    trackingSources: [{ id: "ts-1", user_id: "u1", library_item_id: null, adapter_id: "mangadex", source_key: "manga/1", source_url: "https://mangadex.org/title/1", auto_link_suppressed_at: null }],
+  };
+  const result = restoreTrackingSourceModel(db, "u1", "item-1", "mangadex", "manga/1", "MangaDex", "https://mangadex.org/title/1", true, false);
+  assert.equal(result.status, "linked");
+  assert.equal(db.trackingSources[0].library_item_id, "item-1");
+});
+
+check("T14 (CRITICAL, no user_id trust): the target LibraryItem lookup is scoped by BOTH id and the session's own userId — a caller can never resolve or write against another account's item by id alone", () => {
+  const db = { libraryItems: [{ id: "item-1", user_id: "victim", type: "manga" }], trackingSources: [] };
+  const result = restoreTrackingSourceModel(db, "attacker", "item-1", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(result.status, "item-not-found", "must be indistinguishable from a genuinely nonexistent id — never a signal the item exists under someone else");
+  assert.equal(db.trackingSources.length, 0);
+});
+
+check("T15: a website (or otherwise untrackable) parent item rejects restoration, using the item's REAL stored type — never a value carried in the backup file (BackupTrackingSource has no mediaType field at all)", () => {
+  const db = { libraryItems: [{ id: "item-1", user_id: "u1", type: "website" }], trackingSources: [] };
+  const result = restoreTrackingSourceModel(db, "u1", "item-1", "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(result.status, "unsupported-item-type");
+});
+
+check("T16: cross-adapter same-URL audit applies to restore too — a restored source sharing a URL already linked (under ANY adapter) to the same item is recognized as already-linked, never duplicated", () => {
+  const db = {
+    libraryItems: [{ id: "item-1", user_id: "u1", type: "manga" }],
+    trackingSources: [{ id: "ts-1", user_id: "u1", library_item_id: "item-1", adapter_id: "mangadex", source_key: "manga/1", source_url: "https://mangadex.org/title/1", auto_link_suppressed_at: null }],
+  };
+  const result = restoreTrackingSourceModel(db, "u1", "item-1", "manual", "https://mangadex.org/title/1", "MangaDex (manual)", "https://mangadex.org/title/1", false, false);
+  assert.equal(result.status, "already-linked");
+  assert.equal(db.trackingSources.length, 1, "must never create a second row for the same URL already linked to this item under a different adapter");
+});
+
+// ============================================================
+// Tests U — Migration 0018: import_library_backup now also returns the
+// authoritative backupItemId -> real LibraryItem id mapping
+// (pg_temp.import_item_map) it already builds and uses internally, so
+// TrackingSource restoration can attach to an item newly created by the
+// SAME import, not only one that was already present. U1-U6 are static
+// checks against the actual migration file text; U7+ are behavioral,
+// against importLibraryBackupModel's own extended `itemMap` return
+// (reproduced above, the same "fast JS model of the real RPC" convention
+// every Tests C/A/D/E check already uses — not a substitute for the
+// disposable-database validation documented separately in the Stage 40
+// final report).
+// ============================================================
+
+check("U1 (CRITICAL): migration 0018 exists at the expected path", () => {
+  assert.ok(fs.existsSync(MIGRATION_0018_PATH));
+});
+
+check("U2 (CRITICAL): no migration after 0018 exists — the migrations directory ends exactly at 0018, nothing removed from 0001-0017 either", () => {
+  const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+  assert.equal(files.length, 18, `expected exactly 18 migration files (0001-0018), found ${files.length}: ${files.join(", ")}`);
+  assert.equal(files[files.length - 1], "0018_stage40_backup_item_map.sql");
+  for (let i = 1; i <= 17; i++) {
+    const n = String(i).padStart(4, "0");
+    assert.ok(files.some((f) => f.startsWith(n)), `migration ${n} is missing from the directory`);
+  }
+});
+
+check("U3: 0018 uses CREATE OR REPLACE FUNCTION with the exact same name, argument list, return type, language, and security mode as 0014's import_library_backup — no refactor, no signature change", () => {
+  const source = read0018();
+  assert.ok(/create or replace function public\.import_library_backup\(\s*p_request_id uuid,\s*p_plan jsonb\s*\)/.test(source));
+  assert.ok(/returns jsonb/.test(source));
+  assert.ok(/language plpgsql/.test(source));
+  assert.ok(/security invoker/.test(source), "must remain SECURITY INVOKER, exactly like 0013/0014 — never SECURITY DEFINER");
+  assert.ok(/set search_path = pg_catalog, pg_temp/.test(source));
+});
+
+check("U4 (CRITICAL): 0018's function body is IDENTICAL to 0014's, modulo comments/whitespace, except for the additive itemMap key in the final return", () => {
+  function stripSqlComments(s) {
+    return s.replace(/--[^\n]*\n/g, "\n").replace(/\s+/g, " ").trim();
+  }
+  function extractFunctionBody(text) {
+    const start = text.indexOf("create or replace function public.import_library_backup(");
+    const end = text.indexOf("revoke all on function public.import_library_backup");
+    assert.ok(start >= 0 && end > start, "could not locate the function body in this file");
+    return text.slice(start, end);
+  }
+  const body14 = stripSqlComments(extractFunctionBody(read0014()));
+  const body18 = stripSqlComments(extractFunctionBody(read0018()));
+  const itemMapBlock =
+    /,\s*'itemMap',\s*coalesce\(\s*\(\s*select jsonb_agg\(\s*jsonb_build_object\(\s*'backupItemId',\s*im\.backup_item_id,\s*'realItemId',\s*im\.real_item_id,\s*'wasCreated',\s*im\.was_created\s*\)\s*order by im\.backup_item_id\s*\)\s*from pg_temp\.import_item_map im\s*\),\s*'\[\]'::jsonb\s*\)/;
+  const body18Reduced = body18.replace(itemMapBlock, "");
+  assert.equal(
+    body18Reduced,
+    body14,
+    "0018's function body must be byte-identical to 0014's after removing exactly the additive itemMap return key — any other difference is an unauthorized behavior change",
+  );
+});
+
+check("U5: 0018 preserves 0014's own ownership/grant model — revoke-from-public then grant-to-authenticated on the SAME function signature", () => {
+  const source = read0018();
+  assert.ok(/revoke all on function public\.import_library_backup\(uuid, jsonb\) from public/.test(source));
+  assert.ok(/grant execute on function public\.import_library_backup\(uuid, jsonb\) to authenticated/.test(source));
+});
+
+check("U6: itemMap is built via an explicit ORDER BY inside the aggregate (jsonb_agg(... order by backup_item_id)), never left to unspecified scan order, and defaults to '[]'::jsonb via coalesce rather than null", () => {
+  const source = read0018();
+  assert.ok(/jsonb_agg\(\s*jsonb_build_object\([^)]*\)\s*order by im\.backup_item_id\s*\)/s.test(source));
+  assert.ok(/coalesce\(\s*\(\s*select jsonb_agg/s.test(source), "must coalesce the aggregate to '[]'::jsonb for the zero-rows case");
+});
+
+check("U7 (CRITICAL): itemMap covers a NEWLY CREATED item — a brand-new backup item's real id is now reported, wasCreated=true", () => {
+  const db = makeDb();
+  const plan = { items: [{ backupItemId: "backup-A", type: "manga", title: "New Manga" }] };
+  const result = importLibraryBackupModel(db, "user-1", "req-u7", plan);
+  assert.equal(result.status, "imported");
+  const entry = result.itemMap.find((e) => e.backupItemId === "backup-A");
+  assert.ok(entry, "itemMap must include the newly created item");
+  assert.equal(entry.wasCreated, true);
+  assert.ok(db.libraryItems.has(entry.realItemId), "realItemId must be a real, existing row");
+});
+
+check("U8 (CRITICAL): itemMap covers an ALREADY-PRESENT item (authoritative catalogSource match) — wasCreated=false, mapped to the EXISTING real id, no duplicate created", () => {
+  const db = makeDb();
+  const existingId = genId();
+  db.libraryItems.set(existingId, { id: existingId, userId: "user-1", type: "novel", title: "Existing Novel", catalogSource: { provider: "anilist", externalId: "77" } });
+  const plan = { items: [{ backupItemId: "backup-B", type: "novel", title: "Existing Novel (renamed)", catalogSource: { provider: "anilist", externalId: "77" } }] };
+  const result = importLibraryBackupModel(db, "user-1", "req-u8", plan);
+  const entry = result.itemMap.find((e) => e.backupItemId === "backup-B");
+  assert.ok(entry);
+  assert.equal(entry.wasCreated, false);
+  assert.equal(entry.realItemId, existingId);
+  assert.equal(db.libraryItems.size, 1, "no duplicate LibraryItem was created");
+});
+
+check("U9: a title-only-skipped candidate (never authoritative, never silently attached) has NO itemMap entry at all — client-side source restoration must skip it, never guess", () => {
+  const db = makeDb();
+  const existingId = genId();
+  db.libraryItems.set(existingId, { id: existingId, userId: "user-1", type: "manga", title: "Same Title" });
+  const plan = { items: [{ backupItemId: "backup-C", type: "manga", title: "Same Title" }] };
+  const result = importLibraryBackupModel(db, "user-1", "req-u9", plan);
+  assert.equal(result.itemMap.find((e) => e.backupItemId === "backup-C"), undefined, "a title-only match must never appear in itemMap");
+});
+
+check("U10: itemMap entries are deterministically ordered by backupItemId", () => {
+  const db = makeDb();
+  const plan = {
+    items: [
+      { backupItemId: "zzz", type: "manga", title: "Z" },
+      { backupItemId: "aaa", type: "manga", title: "A" },
+      { backupItemId: "mmm", type: "manga", title: "M" },
+    ],
+  };
+  const result = importLibraryBackupModel(db, "user-1", "req-u10", plan);
+  const ids = result.itemMap.map((e) => e.backupItemId);
+  assert.deepEqual(ids, ["aaa", "mmm", "zzz"]);
+});
+
+check("U11: an import producing zero mapped items returns itemMap = [] , never undefined/null, and every pre-existing response key is still present and correctly typed", () => {
+  const db = makeDb();
+  const result = importLibraryBackupModel(db, "user-1", "req-u11", {});
+  assert.deepEqual(result.itemMap, []);
+  assert.equal(result.status, "imported");
+  assert.equal(typeof result.itemsCreated, "number");
+  assert.equal(typeof result.itemsReused, "number");
+  assert.equal(typeof result.collectionsCreated, "number");
+  assert.equal(typeof result.collectionsReused, "number");
+  assert.equal(typeof result.activityCreated, "number");
+});
+
+check("U12: itemMap for user A never contains user B's real ids — the map only ever reflects rows THIS call's own transaction touched, under the same per-user ownership rules as every other part of this RPC", () => {
+  const db = makeDb();
+  const planA = { items: [{ backupItemId: "b1", type: "manga", title: "A's Item" }] };
+  const resultA = importLibraryBackupModel(db, "user-A", "req-a", planA);
+  const planB = { items: [{ backupItemId: "b1", type: "manga", title: "B's Item" }] };
+  const resultB = importLibraryBackupModel(db, "user-B", "req-b", planB);
+  assert.notEqual(resultA.itemMap[0].realItemId, resultB.itemMap[0].realItemId);
+  assert.equal(db.libraryItems.get(resultA.itemMap[0].realItemId).userId, "user-A");
+  assert.equal(db.libraryItems.get(resultB.itemMap[0].realItemId).userId, "user-B");
+});
+
+check("U13 (CRITICAL, end-to-end): a source whose parent item is BRAND NEW to this import now restores correctly via itemMap — the exact gap 0018 closes", () => {
+  const db = { libraryItems: new Map(), collections: new Map(), collectionItems: [], activityEvents: [], importRequests: new Set() };
+  const importPlan = { items: [{ backupItemId: "backup-A", type: "manga", title: "New Manga" }] };
+  const importResult = importLibraryBackupModel(db, "user-1", "req-u13", importPlan);
+  const mapEntry = importResult.itemMap.find((e) => e.backupItemId === "backup-A");
+  assert.equal(mapEntry.wasCreated, true);
+
+  // Client-side resolution: backupItemId -> realItemId via itemMap ONLY — never title/type matching.
+  const trackingDb = { libraryItems: [{ id: mapEntry.realItemId, user_id: "user-1", type: "manga" }], trackingSources: [] };
+  const restoreResult = restoreTrackingSourceModel(trackingDb, "user-1", mapEntry.realItemId, "manual", "https://a.example/x", "A", "https://a.example/x", false, false);
+  assert.equal(restoreResult.status, "created");
+  assert.equal(trackingDb.trackingSources[0].library_item_id, mapEntry.realItemId);
+});
+
+check("U14 (end-to-end): a source whose parent item was ALREADY PRESENT still restores correctly via itemMap — unchanged from before 0018", () => {
+  const db = makeDb();
+  const existingId = genId();
+  db.libraryItems.set(existingId, { id: existingId, userId: "user-1", type: "manga", title: "Existing" });
+  // Force an already-present classification the same way the client would — via itemMappings (client already knows the real id for already_present items).
+  const importResult = importLibraryBackupModel(db, "user-1", "req-u14", { itemMappings: [{ backupItemId: "backup-B", existingItemId: existingId }] });
+  const mapEntry = importResult.itemMap.find((e) => e.backupItemId === "backup-B");
+  assert.ok(mapEntry);
+  assert.equal(mapEntry.wasCreated, false);
+  assert.equal(mapEntry.realItemId, existingId);
+
+  const trackingDb = { libraryItems: [{ id: existingId, user_id: "user-1", type: "manga" }], trackingSources: [] };
+  const restoreResult = restoreTrackingSourceModel(trackingDb, "user-1", mapEntry.realItemId, "manual", "https://a.example/y", "A", "https://a.example/y", false, false);
+  assert.equal(restoreResult.status, "created");
+});
+
+check("U15: a source whose backupItemId has NO itemMap entry (title-only-skipped parent) is safely skipped by the client resolution logic, never guessed at via a fallback lookup", () => {
+  // Simulates lib/cloud/backup-import.ts's own resolution loop.
+  const itemMap = [{ backupItemId: "backup-A", realItemId: "real-A", wasCreated: true }];
+  const backupTrackingSources = [
+    { backupItemId: "backup-A", adapterId: "manual", sourceKey: "k1" },
+    { backupItemId: "backup-C-skipped", adapterId: "manual", sourceKey: "k2" },
+  ];
+  const realIdByBackupItemId = new Map(itemMap.map((e) => [e.backupItemId, e.realItemId]));
+  let resolved = 0, unresolvable = 0;
+  for (const s of backupTrackingSources) {
+    if (realIdByBackupItemId.has(s.backupItemId)) resolved++;
+    else unresolvable++;
+  }
+  assert.equal(resolved, 1);
+  assert.equal(unresolvable, 1, "the source for a skipped/unmapped parent must be counted as unresolvable, never silently attached elsewhere");
+});
+
+check("U16: the client integration (lib/cloud/backup-import.ts) actually reads itemMap off the RPC response and resolves sources through it — no title/type heuristic exists in that file", () => {
+  const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "cloud", "backup-import.ts"), "utf8");
+  assert.ok(/record\.itemMap/.test(source), "parseResult must read itemMap off the raw RPC response");
+  assert.ok(/realItemIdByBackupItemId/.test(source), "restoreTrackingSourcesFromBackup must resolve via the returned map");
+  assert.ok(!/normalizeTitleForMatching/.test(source), "must never fall back to title matching to resolve a source's parent item");
+});
+
+check("U17: old-client compatibility — a response object missing itemMap entirely (a pre-0018 database) still parses successfully with every pre-existing field intact, itemMap defaulting to an empty array rather than a parse failure", () => {
+  const source = fs.readFileSync(path.join(REPO_ROOT, "src", "lib", "cloud", "backup-import.ts"), "utf8");
+  const fn = source.slice(source.indexOf("function parseItemMap"), source.indexOf("function parseItemMap") + 400);
+  assert.ok(/if \(!Array\.isArray\(value\)\) return \[\]/.test(fn), "a missing/non-array itemMap must degrade to [], never throw or reject the whole response");
+});
+
+check("U18: partial-failure semantics are documented and enforced — a source-restore failure after a successful item import never rolls back or deletes the imported LibraryItem from client code", () => {
+  const panel = fs.readFileSync(path.join(REPO_ROOT, "src", "components", "BackupSettingsPanel.tsx"), "utf8");
+  const importFn = panel.slice(panel.indexOf("async function handleConfirmImport"));
+  const tryBlock = importFn.slice(importFn.indexOf("try {\n          sourceResult"), importFn.indexOf("await Promise.all([library.reload()"));
+  assert.ok(/catch/.test(tryBlock), "the source-restore call must be wrapped so its failure cannot propagate and abort the already-successful import");
+  assert.ok(!/library\.remove|deleteLibraryItem|rollback/i.test(importFn), "must never attempt to delete/roll back an imported item from the client on source-restore failure");
 });
 
 // ============================================================

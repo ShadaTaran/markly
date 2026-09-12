@@ -305,14 +305,13 @@ check("D6: the create button is a normal form submit gated by the form's own val
 // hardcoded provider host — this audits that Stage 39 preserved that
 // invariant rather than introducing a new one.
 // ============================================================
-check("E1 (CRITICAL): no capture file performs a server-side fetch of the shared URL itself", () => {
+check("E1 (CRITICAL): no capture file ever fetches the shared URL itself — any fetch() call present targets only a fixed, same-origin Markly API path, never a variable holding user-supplied input", () => {
   for (const file of captureFiles) {
     const source = src(file);
-    // A fetch() call whose argument is a shared-payload variable (not a
-    // fixed literal) would be the red flag; the simplest, most robust
-    // static proof for this small file set is that fetch() doesn't appear
-    // in them at all — the capture flow never fetches anything itself.
-    assert.ok(!/\bfetch\(/.test(source), `${file} must never call fetch() — no server-side retrieval of the shared URL exists in this flow`);
+    const calls = [...source.matchAll(/\bfetch\(\s*([^,)]+)/g)].map((m) => m[1].trim());
+    for (const arg of calls) {
+      assert.ok(/^["']\/api\//.test(arg), `${file} calls fetch(${arg}) — every fetch target must be a literal same-origin "/api/..." path, never a shared-input variable (Stage 40's Link Source calls are the only fetch()es expected here, and they must stay this way)`);
+    }
   }
 });
 
@@ -448,6 +447,45 @@ check("J7: no history.replaceState was added to scrub the shared query — the G
 });
 
 // ============================================================
+// K — Stage 40: the explicit "Link this source" opt-in integration, and
+// the new "link-source-prompt" step for a freshly created item. Never
+// automatic; a failure here must never roll back or endanger the already-
+// created LibraryItem (Stage 40 §22).
+// ============================================================
+const shareViewSource = src("src/components/ShareCaptureView.tsx");
+
+check("K1: a link-source-prompt step exists, shown only after creating a new media item with a real URL to offer", () => {
+  assert.ok(/kind:\s*"link-source-prompt"/.test(shareViewSource));
+  assert.ok(/Link this page as a source/.test(shareViewSource));
+  assert.ok(/Skip/.test(shareViewSource));
+});
+
+check("K2 (CRITICAL): the link-source-prompt step is only entered from handleSubmitMedia (a real create), never for website items and never unconditionally", () => {
+  const fn = shareViewSource.slice(shareViewSource.indexOf("function handleSubmitMedia"), shareViewSource.indexOf("async function handleLinkSource"));
+  assert.ok(fn.includes('kind: "link-source-prompt"'));
+  assert.ok(/if\s*\(effectiveUrl\s*&&\s*userId\)/.test(fn), "must require both a real URL and a signed-in session before ever offering to link a source");
+});
+
+check("K3 (CRITICAL): a source-link failure never deletes or rolls back the already-created LibraryItem — no delete/remove call exists anywhere near the failure path", () => {
+  const fn = shareViewSource.slice(shareViewSource.indexOf("async function handleLinkSource"));
+  const catchBlock = fn.slice(fn.indexOf("catch"), fn.indexOf("router.push"));
+  assert.ok(!/delete|remove/i.test(catchBlock), "the catch branch must only report failure, never attempt to undo the item creation");
+});
+
+check("K4: Skip always navigates straight to the created item — declining to link a source never blocks or dead-ends the flow", () => {
+  const block = shareViewSource.slice(shareViewSource.indexOf('kind === "link-source-prompt"'), shareViewSource.indexOf('kind === "pickType"'));
+  assert.ok(/Skip[\s\S]*?router\.push\(`\/library\/\$\{activeStep\.itemId\}`\)/.test(block) || /onClick=\{\(\) => router\.push\(`\/library\/\$\{activeStep\.itemId\}`\)\}/.test(block));
+});
+
+check("K5: the existing-item step's 'Link this source' offer is media-only (never shown for website items, which have no Sources concept) and requires a signed-in session", () => {
+  const block = shareViewSource.slice(shareViewSource.indexOf('kind === "existing-item"'), shareViewSource.indexOf('kind === "link-source-prompt"'));
+  assert.ok(block.includes("!isWebsite(activeStep.item)"));
+  assert.ok(block.includes("Boolean(userId)"));
+});
+
+check("K6: 'already linked'/'conflict' outcomes from Add Source or Link Source are surfaced as plain text, never a raw upstream error", () => {
+  assert.ok(!/status.*500|supabase.*message|error\.message/i.test(stripComments(shareViewSource)));
+});
 // Report
 // ============================================================
 const failed = results.filter((r) => !r.ok);
