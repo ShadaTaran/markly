@@ -53,6 +53,13 @@ export async function searchRawgGames(query: string): Promise<MetadataDetails[]>
 
 /** RAWG's list endpoint omits description/developers/publishers; only the detail endpoint has them. */
 export async function getRawgGameDetails(id: string): Promise<Partial<MetadataDetails>> {
+  // Stage 44 hardening — every id this app itself ever produces is RAWG's
+  // own numeric `id` field (searchRawgGames above: `String(game.id)`), so
+  // this is a real invariant, not an arbitrary restriction. Enforced here
+  // (not just trusted from the caller) because `id` is interpolated
+  // directly into the request path below — an unvalidated value could
+  // otherwise reshape the path/query sent to RAWG.
+  if (!/^\d+$/.test(id)) throw new Error("Invalid RAWG game id.");
   const json = (await rawgFetch(`/games/${id}`, {})) as RawgGameDetails;
   const developer = json.developers?.map((d) => d.name).join(", ");
   const publisher = json.publishers?.map((p) => p.name).join(", ");

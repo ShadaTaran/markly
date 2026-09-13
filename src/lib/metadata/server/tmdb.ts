@@ -86,6 +86,13 @@ export async function searchTmdbSeries(query: string): Promise<MetadataDetails[]
 }
 
 export async function getTmdbSeriesEpisodeCount(id: string): Promise<number | undefined> {
+  // Stage 44 hardening — every id this app itself ever produces is TMDB's
+  // own numeric `id` field (searchTmdbSeries above: `String(item.id)`), so
+  // this is a real invariant, not an arbitrary restriction. Enforced here
+  // (not just trusted from the caller) because `id` is interpolated
+  // directly into the request path below — an unvalidated value could
+  // otherwise reshape the path/query sent to TMDB.
+  if (!/^\d+$/.test(id)) throw new Error("Invalid TMDB series id.");
   const json = (await tmdbFetch(`/tv/${id}`, {})) as { number_of_episodes?: number };
   return typeof json.number_of_episodes === "number" ? json.number_of_episodes : undefined;
 }
