@@ -10,6 +10,7 @@ const SETTINGS_NAV = [
   { id: "recovery", label: "Recently Changed", href: "/settings/recovery" },
   { id: "backup", label: "Data & Backup", href: "/settings/backup" },
   { id: "app", label: "App", href: "/settings/app" },
+  { id: "account", label: "Account", href: "/settings/account" },
 ] as const;
 
 interface SettingsShellProps {

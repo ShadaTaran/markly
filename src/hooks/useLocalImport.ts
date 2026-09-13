@@ -29,6 +29,24 @@ function persistDismissed(userId: string) {
   }
 }
 
+/**
+ * Stage 43 — removes this one user's dismissal flag, and only this one's:
+ * the key is namespaced by userId specifically so this can never touch a
+ * different account's flag. Called after a confirmed account deletion (the
+ * deleted id can never sign in again, so its flag would otherwise sit
+ * inert forever) — never on ordinary sign-out, and never as a broader
+ * storage wipe. Best-effort/non-throwing: a deleted account is already
+ * deleted server-side regardless of whether this local, purely cosmetic
+ * flag could be removed.
+ */
+export function clearImportBannerDismissedForUser(userId: string): void {
+  try {
+    localStorage.removeItem(DISMISS_FLAG_PREFIX + userId);
+  } catch {
+    // Best-effort only — see doc comment above.
+  }
+}
+
 /** Detects whether this signed-in user has not-yet-imported local data on this device, and drives the import action. */
 export function useLocalImport(userId: string | null) {
   const [summary, setSummary] = useState<LocalDataSummary | null>(null);

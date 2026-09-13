@@ -33,6 +33,27 @@ function markMigrationComplete(userId: string): void {
   }
 }
 
+/**
+ * Stage 43 — removes this one user's migration marker, and only this
+ * one's: migrationFlagKey namespaces by userId specifically so this can
+ * never touch a different account's marker. Called after a confirmed
+ * account deletion (the deleted id can never sign in again, so its marker
+ * would otherwise sit inert forever) — never on ordinary sign-out. Local
+ * library/collection/activity data itself (loadLibraryItems etc., above)
+ * is completely untouched by this — only the per-account "have I already
+ * imported" marker is removed. Best-effort/non-throwing: a deleted account
+ * is already deleted server-side regardless of whether this local, purely
+ * advisory marker could be removed.
+ */
+export function clearMigrationMarkerForUser(userId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(migrationFlagKey(userId));
+  } catch {
+    // Best-effort only — see doc comment above.
+  }
+}
+
 export interface LocalDataSummary {
   itemCount: number;
   collectionCount: number;
