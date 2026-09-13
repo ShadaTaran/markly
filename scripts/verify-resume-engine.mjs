@@ -596,9 +596,13 @@ check("O1: calling resolveResumeTarget twice with two DIFFERENT sources arrays f
 // ============================================================
 // P — no migration 0019 (Stage 41 requires no schema change).
 // ============================================================
-check("P1: no migration 0019 (or beyond) exists — Stage 41 required no schema change", () => {
+check("P1: Stage 41's own resume engine required no schema change — migration 0019, if present, is Stage 42's unrelated source-delete RLS policy (tracking_sources DELETE authorization), never a resume-engine/selection-logic change. (0019 was approved and created after Stage 41 shipped — see scripts/verify-source-lifecycle.mjs's own AE/AI-AR for its full audit trail.)", () => {
   const migrations = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
-  assert.equal(migrations[migrations.length - 1], "0018_stage40_backup_item_map.sql");
+  assert.ok(migrations.includes("0018_stage40_backup_item_map.sql"));
+  if (migrations.includes("0019_stage42_source_delete_policy.sql")) {
+    const migration0019 = src("supabase/migrations/0019_stage42_source_delete_policy.sql");
+    assert.ok(!/resolveResumeTarget|selectContinueSource|selectRecentlyUsedSource/.test(migration0019), "0019 must have nothing to do with resume-engine selection logic");
+  }
 });
 
 // ============================================================
@@ -719,10 +723,10 @@ check("T-A (CRITICAL): ItemDetailView owns the one TrackingSource fetch/state an
   assert.ok(!/useEffect[\s\S]{0,300}fetch\(`\/api\/tracking-sources\?libraryItemId=/.test(sectionSourceText), "ItemTrackingSourcesSection must no longer have its own mount-time fetch of this item's sources — that was the duplicate-fetch bug");
 });
 
-check("T-B (CRITICAL): a successful Add/Link source outcome reports the fresh list up via onSourcesChange, not a local setState", () => {
+check("T-B (CRITICAL): a successful Add/Link source outcome reports up to the parent for reconciliation, not a local setState — Stage 42 moved the reconciling fetch itself into ItemDetailView's shared onRefreshSources, so this section now triggers that shared refresh rather than applying data.sources itself", () => {
   assert.ok(!/const \[sources, setSources\] = useState/.test(sectionSourceText), "the section must no longer hold its own independent sources state");
   const addBlock = sectionSourceText.slice(sectionSourceText.indexOf("function handleAddSourceOutcome"));
-  assert.ok(/onSourcesChange\(data\.sources\)/.test(addBlock), "the post-add refresh must hand its result to the parent via onSourcesChange");
+  assert.ok(/onRefreshSources\(\)/.test(addBlock), "the post-add path must delegate to the parent's shared onRefreshSources, not apply a result locally");
 });
 
 check("T-C (CRITICAL): a successful Unlink reports the filtered list up via onSourcesChange", () => {
@@ -807,13 +811,13 @@ check("T-J (CRITICAL): no global custom-event or localStorage synchronization ha
 // convention as Section T.
 // ============================================================
 
-check("U-A (CRITICAL): a successful Add/Link invalidates the parent (onSourcesChange(null)) BEFORE the reconciling GET is issued — not only if that GET later fails", () => {
+check("U-A (CRITICAL): a successful Add/Link invalidates the parent (onSourcesChange(null)) BEFORE the reconciling refresh is requested — not only if that refresh later fails. Stage 42 moved the actual fetch into ItemDetailView's shared onRefreshSources, so this section's own ordering requirement is now onSourcesChange(null) before onRefreshSources(), not before a literal fetch() call in this file", () => {
   const branch = sectionSourceText.slice(sectionSourceText.indexOf("function handleAddSourceOutcome"), sectionSourceText.indexOf('if (outcome.status === "already-linked")'));
   const invalidateIndex = branch.indexOf("onSourcesChange(null)");
-  const fetchIndex = branch.indexOf("fetch(`/api/tracking-sources?libraryItemId=");
+  const refreshIndex = branch.indexOf("onRefreshSources()");
   assert.ok(invalidateIndex !== -1, "must call onSourcesChange(null) somewhere in the created/linked branch");
-  assert.ok(fetchIndex !== -1, "the reconciling GET must still be present");
-  assert.ok(invalidateIndex < fetchIndex, "invalidation must happen BEFORE the GET starts, so a slow or failing GET is never covering for a silently-stale array");
+  assert.ok(refreshIndex !== -1, "the reconciling refresh must still be requested");
+  assert.ok(invalidateIndex < refreshIndex, "invalidation must happen BEFORE the refresh starts, so a slow or failing refresh is never covering for a silently-stale array");
 });
 
 check("U-B: successful Add + GET success installs the new array — resolveResumeTarget recomputes from it normally (pure re-run, same as T-E/T-F)", () => {
@@ -1005,9 +1009,10 @@ check("V-L (CRITICAL): ItemDetailView's actual source file contains the sourceSt
   assert.ok(/const resumeTarget: ResumeTarget = sourceStateUnknown/.test(itemDetailSource));
 });
 
-check("V-M: the initial-fetch failure handler in ItemDetailView now leaves/resets trackingSources to null (unknown), never [] (falsely-confirmed-empty) — the same conflation this whole correction targets, fixed at its other occurrence in the same effect", () => {
-  const effectBlock = itemDetailSource.slice(itemDetailSource.indexOf("useEffect(() => {", itemDetailSource.indexOf("const [trackingSources, setTrackingSources]")), itemDetailSource.indexOf("if (!library.isHydrated)"));
-  assert.ok(/\.catch\(\(\) => \{\s*if \(!cancelled\) setTrackingSources\(null\);/.test(effectBlock), "a failed initial fetch must not be promoted to a false 'confirmed zero' result");
+check("V-M: a failed fetch (initial load, post-Add reconciliation, or Retry — all now the SAME shared refreshTrackingSources) leaves/resets trackingSources to null (unknown), never [] (falsely-confirmed-empty) — the same conflation this whole correction targets. Stage 42 consolidated what used to be two separate catch blocks (the mount effect's own, and this one) into refreshTrackingSources' single catch, so this now checks that shared implementation directly", () => {
+  const fn = itemDetailSource.slice(itemDetailSource.indexOf("const refreshTrackingSources = useCallback"), itemDetailSource.indexOf("const refreshTrackingSources = useCallback") + 900);
+  assert.ok(/catch \{[\s\S]*?setTrackingSources\(null\);/.test(fn), "a failed fetch must not be promoted to a false 'confirmed zero' result");
+  assert.ok(!/catch \{[\s\S]*?setTrackingSources\(\[\]\)/.test(fn), "must never fall back to [] on failure");
 });
 
 check("V-N: this gate does not touch selectContinueSource, selectRecentlyUsedSource, or resolveResumeTarget themselves — it lives entirely in ItemDetailView, the consumer, per the correction's own explicit instruction not to encode UI loading state in the pure resume engine", () => {

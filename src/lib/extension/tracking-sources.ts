@@ -404,6 +404,73 @@ export async function createManualSource(
   return { status: "created", sourceId: row.id };
 }
 
+export type DeleteSourceResult = { status: "deleted" } | { status: "already-missing" } | { status: "not-deletable" };
+
+/**
+ * Stage 42 — permanent removal of a TrackingSource row. Session-
+ * authenticated (RLS-scoped); deliberately far more conservative than
+ * unlinkSource above: Unlink preserves the row (and its
+ * auto_link_suppressed_at memory) so a future explicit re-link or
+ * detection is handled correctly; this ERASES the row entirely, so it is
+ * offered only for a source class where erasing loses nothing Markly
+ * depends on:
+ *
+ *   - library_item_id IS NULL (already unlinked — never delete a row a
+ *     LibraryItem is currently resuming through; the user must Unlink
+ *     first, which is its own separate, already-existing action).
+ *   - adapter_id = 'manual' (see this function's own module: `recordDetection`,
+ *     `claimSourceLink`, and every real extension adapter — grepped, none
+ *     of them ever write or accept "manual" as an adapter id; it is a
+ *     reserved sentinel only `createManualSource` and `restoreTrackingSource`
+ *     ever write, both exclusively in response to an explicit user action).
+ *     Because nothing automatic can ever (re)create a "manual" row, deleting
+ *     one can never open an automatic-relink hole the way deleting an
+ *     unlinked EXTENSION-detected row could (that row's own
+ *     auto_link_suppressed_at is the only thing stopping the next real
+ *     detection from silently relinking it — erasing the row erases that
+ *     memory too, which is why Stage 42 does not extend hard-delete to
+ *     non-manual sources at all).
+ *
+ * The WHERE clause of the DELETE itself — not a prior SELECT followed by a
+ * separate DELETE — is the sole authority for those two conditions, so
+ * they are evaluated atomically as part of one statement: if another
+ * request links this exact row a moment before this DELETE reaches the
+ * database, `library_item_id IS NULL` no longer matches, zero rows are
+ * affected, and the row survives (reported as "not-deletable"), never
+ * silently erased out from under whatever item just claimed it.
+ */
+export async function deleteUnlinkedManualSource(supabase: SupabaseClient, userId: string, sourceId: string): Promise<DeleteSourceResult> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .delete()
+    .eq("id", sourceId)
+    .eq("user_id", userId)
+    .is("library_item_id", null)
+    .eq("adapter_id", "manual")
+    .select("id")
+    .returns<{ id: string }[]>();
+  if (error) throw error;
+
+  if ((data?.length ?? 0) > 0) return { status: "deleted" };
+
+  // Zero rows matched the atomic delete above — find out why, purely to
+  // shape an honest response; this second read performs no mutation, so
+  // there is nothing left to race. Scoped to the same user_id as the
+  // delete attempt, so a foreign user's real row and a genuinely
+  // nonexistent id produce the identical "already-missing" outcome —
+  // never a signal an attacker could use to enumerate other accounts'
+  // source ids (mirrors createManualSource's own item-not-found framing).
+  const { data: existing, error: readError } = await supabase
+    .from(TABLE)
+    .select("id")
+    .eq("id", sourceId)
+    .eq("user_id", userId)
+    .returns<{ id: string }[]>();
+  if (readError) throw readError;
+
+  return existing && existing.length > 0 ? { status: "not-deletable" } : { status: "already-missing" };
+}
+
 export type RestoreTrackingSourceResult =
   | { status: "created" }
   | { status: "linked" }

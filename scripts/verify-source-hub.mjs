@@ -250,13 +250,16 @@ check("H2: Dashboard's own best-source selection (existing, unchanged) remains t
 // backup restore's item-mapping gap — see Section N below — never
 // conflated with this section's own claim.
 // ============================================================
-check("I1: Source Hub itself and the Part B ownership/type correction required no schema change — the only migration added anywhere in this stage is 0018 (backup item-map, Section N below), never a second one for Source Hub/Part B", () => {
+check("I1: Source Hub itself and the Part B ownership/type correction required no schema change — the only migration added anywhere in this stage is 0018 (backup item-map, Section N below), never a second one for Source Hub/Part B. (0019, if present, is Stage 42's own later, unrelated tracking_sources DELETE-policy correction — bumped forward same as every other stage's version of this check.)", () => {
   const migrations = readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
     .sort();
   assert.ok(migrations.includes("0017_stage37_web_push.sql"));
   const beyond0017 = migrations.filter((f) => !migrations.slice(0, migrations.indexOf("0017_stage37_web_push.sql") + 1).includes(f));
-  assert.deepEqual(beyond0017, ["0018_stage40_backup_item_map.sql"], "exactly one migration beyond 0017 is expected — 0018, and nothing else");
+  assert.ok(
+    beyond0017.every((f) => f === "0018_stage40_backup_item_map.sql" || f === "0019_stage42_source_delete_policy.sql"),
+    `only 0018 (this stage) and 0019 (Stage 42, unrelated) are expected beyond 0017, found: ${beyond0017.join(", ")}`,
+  );
 });
 
 check("I2: migration 0017 itself still exists (immutable, per every prior stage's own rule) — untouched by either the Source Hub feature or migration 0018", () => {
@@ -413,11 +416,11 @@ check("L3: restoreTrackingSource (the backup-restore write path) never introduce
 // and that the client-side source-restore path this script already
 // audits (Section L) is what actually consumes it.
 // ============================================================
-check("N1 (CRITICAL): migration 0018 exists and is the ONLY migration beyond 0017", () => {
+check("N1 (CRITICAL): migration 0018 exists (this stage's own backup item-map correction), and 0019 (Stage 42's later, unrelated tracking_sources DELETE-policy correction) is the only migration beyond it — bumped forward same as every other stage's version of this check", () => {
   assert.ok(existsSync("supabase/migrations/0018_stage40_backup_item_map.sql"));
   const migrations = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
-  assert.equal(migrations[migrations.length - 1], "0018_stage40_backup_item_map.sql");
-  assert.ok(!migrations.some((f) => f.startsWith("0019")), "no migration 0019 or beyond exists");
+  assert.equal(migrations[migrations.length - 1], "0019_stage42_source_delete_policy.sql");
+  assert.ok(!migrations.some((f) => f.startsWith("0020")), "no migration 0020 or beyond exists");
 });
 
 check("N2: 0018 is additive only — it does not touch (edit, drop, or replace anything in) migrations 0001-0017's own filenames", () => {

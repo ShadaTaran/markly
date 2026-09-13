@@ -18,6 +18,7 @@ import { getSafeOpenSourceUrl, getSourceDisplayName, getSourceHostname, formatSo
 import { LibraryItemDialog, type DialogState } from "@/components/LibraryItemDialog";
 import type { DetectedFallback } from "@/components/MetadataSearchPanel";
 import { Dialog } from "@/components/Dialog";
+import { DeleteSourceDialog } from "@/components/DeleteSourceDialog";
 import { MediaItemForm } from "@/components/MediaItemForm";
 import type { PersonalTrackingValues } from "@/components/CatalogTrackingForm";
 import type { MetadataDetails } from "@/lib/metadata/types";
@@ -81,6 +82,7 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
   const [addDialogState, setAddDialogState] = useState<DialogState>(null);
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [showAllDevices, setShowAllDevices] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<TrackingSourceSummary | null>(null);
 
   // Stage 26 — loaded eagerly (rather than only on first "Add or Link"
   // click, as before) so linked sources can be grouped under their real
@@ -361,6 +363,48 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
     }
   }
 
+  /**
+   * Stage 42 — permanent removal, offered only for a source that is
+   * BOTH unlinked (library_item_id is null) AND manual (adapter_id ===
+   * "manual") — see the eligibility check at this function's own call
+   * site below, and deleteUnlinkedManualSource's doc comment for why
+   * that pairing is the only one Stage 42 makes deletable. The server's
+   * own atomic DELETE...WHERE is still the real authority (this client
+   * check only decides whether to show the button at all); a genuine
+   * "not-deletable" response — the source got linked or relinked to a
+   * different adapter between render and click — refetches nothing and
+   * just surfaces the message, since the row's true current state will
+   * naturally show correctly the next time this list reloads.
+   */
+  async function deleteSource(sourceId: string) {
+    setBusy(`delete-${sourceId}`);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/tracking-sources/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId }),
+      });
+      const result = (await response.json().catch(() => null)) as { status?: string } | null;
+      if (!response.ok || !result?.status) {
+        setError("Couldn't delete that source. Try again.");
+        return;
+      }
+      if (result.status === "not-deletable") {
+        setError("That source can't be deleted anymore — it may have been linked to an item.");
+        return;
+      }
+      // "deleted" and "already-missing" both mean the row is gone —
+      // idempotent from the UI's perspective (Stage 42 §14).
+      setSources((current) => current.filter((source) => source.id !== sourceId));
+    } catch {
+      setError("Couldn't delete that source. Try again.");
+    } finally {
+      setBusy(null);
+      setDeleteConfirm(null);
+    }
+  }
+
   /** Stage 26 — the auto_track_enabled toggle already existed server-side (Stage 18/22); this is the first UI that lets a user actually flip it. */
   async function toggleAutoTrack(sourceId: string, enabled: boolean) {
     setBusy(`toggle-${sourceId}`);
@@ -587,13 +631,26 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
                             </p>
                           </div>
                           {linkingSourceId !== source.id && (
-                            <button
-                              type="button"
-                              onClick={() => openLinkPicker(source.id)}
-                              className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
-                            >
-                              Add or Link
-                            </button>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {/* Stage 42 — permanent delete is offered ONLY for unlinked + adapter_id "manual" sources (see deleteSource's own doc comment): a non-manual/extension-detected row's auto_link_suppressed_at memory would be lost forever if the row itself were erased, potentially reopening an automatic-relink hole the next time that same page is detected. Manual sources carry no such risk — nothing automatic can ever recreate one. */}
+                              {source.adapterId === "manual" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteConfirm(source)}
+                                  disabled={busy !== null}
+                                  className="text-xs font-medium text-muted-foreground transition-colors hover:text-danger disabled:opacity-60"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openLinkPicker(source.id)}
+                                className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-colors hover:bg-foreground/85"
+                              >
+                                Add or Link
+                              </button>
+                            </div>
                           )}
                         </div>
 
@@ -696,6 +753,13 @@ export function TrackingSettingsPanel({ initialDevices, initialSources }: Tracki
           />
         )}
       </Dialog>
+
+      <DeleteSourceDialog
+        source={deleteConfirm}
+        onCancel={() => setDeleteConfirm(null)}
+        onConfirm={() => deleteConfirm && deleteSource(deleteConfirm.id)}
+        busy={deleteConfirm !== null && busy === `delete-${deleteConfirm.id}`}
+      />
     </div>
   );
 }

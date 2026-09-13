@@ -1758,11 +1758,11 @@ check("U1 (CRITICAL): migration 0018 exists at the expected path", () => {
   assert.ok(fs.existsSync(MIGRATION_0018_PATH));
 });
 
-check("U2 (CRITICAL): no migration after 0018 exists — the migrations directory ends exactly at 0018, nothing removed from 0001-0017 either", () => {
+check("U2 (CRITICAL): the migrations directory contains exactly 0001-0019, nothing removed and nothing beyond — bumped forward from 0018 now that Stage 42's own unrelated source-delete policy correction (0019_stage42_source_delete_policy.sql) legitimately added one, same convention as every other stage's own version of this check", () => {
   const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
-  assert.equal(files.length, 18, `expected exactly 18 migration files (0001-0018), found ${files.length}: ${files.join(", ")}`);
-  assert.equal(files[files.length - 1], "0018_stage40_backup_item_map.sql");
-  for (let i = 1; i <= 17; i++) {
+  assert.equal(files.length, 19, `expected exactly 19 migration files (0001-0019), found ${files.length}: ${files.join(", ")}`);
+  assert.equal(files[files.length - 1], "0019_stage42_source_delete_policy.sql");
+  for (let i = 1; i <= 18; i++) {
     const n = String(i).padStart(4, "0");
     assert.ok(files.some((f) => f.startsWith(n)), `migration ${n} is missing from the directory`);
   }

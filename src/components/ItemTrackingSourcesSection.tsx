@@ -31,17 +31,29 @@ interface ItemTrackingSourcesSectionProps {
    * mark it UNKNOWN. Stage 41.3 — a live-scenario audit found that once a
    * server mutation has succeeded, the array this component held a moment
    * ago is no longer guaranteed correct (e.g. Add just added a second
-   * source server-side) — so the one genuinely-necessary follow-up GET
-   * (see handleAddSourceOutcome) invalidates the parent to `null` FIRST,
-   * before it even starts, rather than only updating on success. If that
-   * GET fails, the parent is left at `null` rather than quietly continuing
-   * to treat the pre-mutation array as current — the same `null` already
-   * used for "still loading," so ItemDetailView's existing `trackingSources
-   * ?? []` fallback naturally stops offering a (possibly stale) direct/
-   * choose_source Continue target without any change to resolveResumeTarget
-   * itself.
+   * source server-side) — so the reconciling refresh (see
+   * handleAddSourceOutcome, which calls `onRefreshSources`) invalidates the
+   * parent to `null` FIRST, before that refresh even starts, rather than
+   * only updating on success. If the refresh fails, the parent is left at
+   * `null` rather than quietly continuing to treat the pre-mutation array
+   * as current — the same `null` already used for "still loading," so
+   * ItemDetailView's existing `trackingSources ?? []` fallback naturally
+   * stops offering a (possibly stale) direct/choose_source Continue target
+   * without any change to resolveResumeTarget itself.
    */
   onSourcesChange: (sources: TrackingSourceSummary[] | null) => void;
+  /** Stage 42 — set by the parent whenever its OWN authoritative fetch (initial load, post-Add reconciliation, or a Retry) most recently failed; undefined while sources are loading normally or already loaded. Distinguishes "still loading" from "a fetch genuinely failed" so Retry is offered only for the latter. */
+  sourcesError: string | undefined;
+  /**
+   * Stage 42 — ItemDetailView's own shared fetch, reused here for two
+   * purposes: (1) the reconciling refresh after a successful Add/Relink,
+   * and (2) the explicit Retry action shown whenever `sources` is null and
+   * `sourcesError` is set. This section never performs its OWN
+   * authoritative source fetch — ItemDetailView remains the single owner
+   * of that state, per the Stage 41.2/42 architecture; this callback is
+   * the only way this section ever asks for fresher data.
+   */
+  onRefreshSources: () => Promise<void>;
 }
 
 /**
@@ -51,11 +63,23 @@ interface ItemTrackingSourcesSectionProps {
  * "Add source" action when there are zero sources yet, instead of
  * rendering nothing.
  */
-export function ItemTrackingSourcesSection({ itemId, userId, sources, onSourcesChange }: ItemTrackingSourcesSectionProps) {
+export function ItemTrackingSourcesSection({ itemId, userId, sources, onSourcesChange, sourcesError, onRefreshSources }: ItemTrackingSourcesSectionProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [addOpen, setAddOpen] = useState(false);
   const [addNotice, setAddNotice] = useState<string | undefined>();
+  // Stage 42 — local only to this button's own busy/disabled affordance;
+  // ItemDetailView's refreshTrackingSources owns the actual result/error.
+  const [retrying, setRetrying] = useState(false);
+
+  async function handleRetry() {
+    setRetrying(true);
+    try {
+      await onRefreshSources();
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function toggleAutoTrack(sourceId: string, enabled: boolean) {
     if (!sources) return;
@@ -111,30 +135,21 @@ export function ItemTrackingSourcesSection({ itemId, userId, sources, onSourcesC
       // by this point (AddSourceDialog only calls onLinked on a 2xx
       // response), so the parent's pre-mutation array is immediately
       // stale/unverified — invalidate it to `null` before the reconciling
-      // GET even starts, not only if that GET fails. Otherwise a failed
-      // GET would leave the parent quietly treating the OLD array as
-      // still authoritative (e.g. still showing a direct Continue target
-      // to a single old source, when the server may now have two).
+      // refresh even starts, not only if that refresh fails. Otherwise a
+      // failed refresh would leave the parent quietly treating the OLD
+      // array as still authoritative (e.g. still showing a direct Continue
+      // target to a single old source, when the server may now have two).
       onSourcesChange(null);
-      setError(undefined);
-      // AddSourceOutcome only carries {status, sourceId} — not the full
-      // TrackingSourceSummary shape (adapterId, lastSeenAt, etc.) — so a
-      // fresh GET is the one genuinely necessary network round-trip here,
-      // per Stage 41.2's "a single deliberate refresh after a mutation is
-      // acceptable" allowance. Its result is handed to the PARENT via
-      // onSourcesChange rather than kept in a local state copy, so this is
-      // still a single shared source of truth, not a second one.
-      if (!userId) return;
-      fetch(`/api/tracking-sources?libraryItemId=${encodeURIComponent(itemId)}`)
-        .then((response) => (response.ok ? response.json() : Promise.reject(new Error("failed"))))
-        .then((data: { sources: TrackingSourceSummary[] }) => onSourcesChange(data.sources))
-        .catch(() => {
-          // Leave the parent at `null` (already invalidated above) rather
-          // than reinstating the old array — the source list genuinely is
-          // unknown until the user reloads/retries. No automatic rollback
-          // of the successful server mutation, no forced page reload.
-          setError("Source added, but the source list couldn't refresh. Reload to see the latest sources.");
-        });
+      // Stage 42 — the reconciling refresh itself is now ItemDetailView's
+      // own shared onRefreshSources (the exact same fetch Retry uses), not
+      // a second fetch embedded here. AddSourceOutcome only ever carries
+      // {status, sourceId} — never the full TrackingSourceSummary shape —
+      // so a fresh authoritative read is still the one genuinely necessary
+      // round-trip; ItemDetailView owns applying its result (or, on
+      // failure, setting the visible sourcesError this section renders
+      // below, with Retry available). No automatic rollback of the
+      // successful server mutation, no forced page reload either way.
+      void onRefreshSources();
       return;
     }
     if (outcome.status === "already-linked") {
@@ -169,7 +184,12 @@ export function ItemTrackingSourcesSection({ itemId, userId, sources, onSourcesC
 
       {!sources && (
         <div className="rounded-md border border-dashed border-border p-3">
-          <p className="text-sm text-muted-foreground">{error ? "Sources unavailable." : "Loading sources…"}</p>
+          <p className="text-sm text-muted-foreground">{sourcesError ? "Sources unavailable." : "Loading sources…"}</p>
+          {sourcesError && (
+            <Button variant="secondary" className="mt-2" onClick={handleRetry} disabled={retrying}>
+              {retrying ? "Retrying…" : "Retry"}
+            </Button>
+          )}
         </div>
       )}
 

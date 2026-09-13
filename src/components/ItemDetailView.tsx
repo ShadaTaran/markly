@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaItemInput, WebsiteItemInput } from "@/types/library-item";
@@ -109,29 +109,59 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
   // either — see the `sourceStateUnknown` gate below, which is the actual
   // consumer of this distinction).
   const [trackingSources, setTrackingSources] = useState<TrackingSourceSummary[] | null>(null);
+  // Stage 42 — visible reason `trackingSources` is null, so
+  // ItemTrackingSourcesSection can distinguish "still loading" (undefined)
+  // from "a fetch genuinely failed" (a message) and offer Retry only for
+  // the latter. Cleared to undefined the moment a fetch succeeds.
+  const [sourcesError, setSourcesError] = useState<string | undefined>(undefined);
+  // Monotonic call counter, not a boolean "in flight" guard: this page
+  // does NOT remount when navigating between two different item ids
+  // (app/library/[id]/page.tsx renders ItemDetailView with no `key`), so
+  // an in-flight fetch for the OLD item can still be pending when the
+  // effect below re-runs for a NEW item — a boolean guard would wrongly
+  // block the new item's own fetch from ever starting. Instead, every
+  // call claims the next number, and a call only applies its own result if
+  // it is still the most recent one by the time it resolves — whether it
+  // was superseded by an itemId change or by a second concurrent Retry.
+  const latestRequestId = useRef(0);
+
+  // Stage 42 — the ONE fetch implementation, shared by initial load, the
+  // post-Add/Relink reconciliation ItemTrackingSourcesSection triggers,
+  // and the explicit Retry button shown while sources are unavailable.
+  // Kept as a plain callback (not a bespoke data layer) per the
+  // correction's own "avoid copying the request implementation into
+  // multiple callbacks" instruction. Never called for a signed-out user
+  // (trackingSources simply stays null there, which sourceStateUnknown
+  // already treats as "not applicable", not "unknown").
+  const refreshTrackingSources = useCallback(async () => {
+    if (!userId) return;
+    const requestId = ++latestRequestId.current;
+    try {
+      const response = await fetch(`/api/tracking-sources?libraryItemId=${encodeURIComponent(itemId)}`);
+      if (!response.ok) throw new Error("failed");
+      const data: { sources: TrackingSourceSummary[] } = await response.json();
+      if (latestRequestId.current !== requestId) return; // superseded — a newer refresh already started
+      setTrackingSources(data.sources);
+      setSourcesError(undefined);
+    } catch {
+      if (latestRequestId.current !== requestId) return;
+      // Stage 41.4 — a failed fetch tells us nothing about the real
+      // TrackingSource set; resetting to `null` (never `[]`) keeps that
+      // honest instead of quietly claiming "confirmed zero". Stage 42
+      // additionally surfaces WHY, so Retry has something to react to.
+      setTrackingSources(null);
+      setSourcesError("Couldn't load the source list. Try again.");
+    }
+  }, [itemId, userId]);
+
   useEffect(() => {
     // No setState here for the signed-out case: the gate below already
     // treats a permanently-null trackingSources as "not applicable" (not
-    // "unknown") whenever userId is null — there's nothing to reset, so
-    // this stays a pure "fetch and subscribe" body with no synchronous
-    // setState call in it.
+    // "unknown") whenever userId is null — there's nothing to reset.
     if (!userId) return;
-    let cancelled = false;
-    fetch(`/api/tracking-sources?libraryItemId=${encodeURIComponent(itemId)}`)
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("failed"))))
-      .then((data: { sources: TrackingSourceSummary[] }) => {
-        if (!cancelled) setTrackingSources(data.sources);
-      })
-      .catch(() => {
-        // Stage 41.4 — a failed fetch tells us nothing about the real
-        // TrackingSource set; leaving/resetting to `null` (never `[]`)
-        // keeps that honest instead of quietly claiming "confirmed zero".
-        if (!cancelled) setTrackingSources(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [itemId, userId]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time fetch from an external store (a network round trip) whenever itemId/userId changes; same established pattern as useTrackingSources.ts's own hydrate effect — can't be derived at render time since it's async.
+    void refreshTrackingSources();
+  }, [userId, refreshTrackingSources]);
 
   if (!library.isHydrated) {
     return (
@@ -390,7 +420,9 @@ export function ItemDetailView({ itemId }: ItemDetailViewProps) {
               itemId={itemId}
               userId={userId}
               sources={trackingSources}
+              sourcesError={sourcesError}
               onSourcesChange={setTrackingSources}
+              onRefreshSources={refreshTrackingSources}
             />
           )}
 
