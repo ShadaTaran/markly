@@ -14,10 +14,26 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SITE_URL = "https://markly-lime.vercel.app";
+const SITE_DESCRIPTION =
+  "Markly is a single library for anime, manga, novels, movies, series, games, and bookmarked websites — with progress that follows you across devices.";
+
 export const metadata: Metadata = {
-  title: "Markly — Bookmark Manager",
-  description:
-    "A modern bookmark manager for organizing, searching, and managing your favorite websites.",
+  metadataBase: new URL(SITE_URL),
+  title: "Markly",
+  description: SITE_DESCRIPTION,
+  openGraph: {
+    title: "Markly",
+    description: SITE_DESCRIPTION,
+    url: SITE_URL,
+    siteName: "Markly",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Markly",
+    description: SITE_DESCRIPTION,
+  },
   appleWebApp: {
     title: "Markly",
     // "default" (not "black-translucent") deliberately: a translucent

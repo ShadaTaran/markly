@@ -99,6 +99,14 @@ export function AuthForm({ mode }: AuthFormProps) {
         />
       </Field>
 
+      {mode === "signin" && (
+        <p className="-mt-2 text-right text-sm">
+          <Link href="/forgot-password" className="text-muted-foreground hover:text-foreground">
+            Forgot password?
+          </Link>
+        </p>
+      )}
+
       {error && <p className="text-sm text-red-500">{error}</p>}
 
       <Button type="submit" variant="primary" disabled={submitting} className="w-full">
